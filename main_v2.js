@@ -19,7 +19,7 @@
 //  Admin can also set/clear users/<uid>.expiresAt (timestamp) in the console at any time.
 //  IP LOCK: only FB.maxPerIp accounts can be created from one public IP (stored hashed in Firestore "ips").
 
-var APP_VERSION = 1;          // bump this on every release you publish (see AUTO UPDATE below)
+var APP_VERSION = 2;          // bump this on every release you publish (see AUTO UPDATE below)
 var GW = 2093, GH = 1177;
 var store = storages.create("cabal_respawn_redfinger");
 

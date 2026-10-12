@@ -19,7 +19,7 @@
 //  Admin can also set/clear users/<uid>.expiresAt (timestamp) in the console at any time.
 //  IP LOCK: only FB.maxPerIp accounts can be created from one public IP (stored hashed in Firestore "ips").
 
-var APP_VERSION = 1;          // bump this on every release you publish (see AUTO UPDATE below)
+var APP_VERSION = 4;          // bump this on every release you publish (see AUTO UPDATE below)
 var GW = 2093, GH = 1177;
 var store = storages.create("cabal_respawn_redfinger");
 
@@ -181,7 +181,7 @@ function checkUpdate(manual) {                    // manual = the UPDATE SCRIPT 
 function fbStart() {
   if (fbThread) { try { fbThread.interrupt(); } catch (e) {} }
   fbThread = threads.start(function () {
-    var beatN = 0;
+    var beatN = 0, lastPushed = null;
     while (fbAuth) {
       try {
         beatN++;
@@ -194,7 +194,7 @@ function fbStart() {
           }
         }
         if (!acctAdmin && acctExp && nowMs() >= acctExp) { kickOut("Account expired - enter a new key to log in"); return; }
-        fbPush(fbState);
+        if (fbState !== lastPushed || beatN % 4 === 1) { fbPush(fbState); lastPushed = fbState; }   // state changes go out at once, otherwise a heartbeat every ~2 min (keeps Firestore writes ~75% lower)
         if (fbQueue.length && fbAuth) {
           var batch = fbQueue.splice(0, 20);
           var r = fbCommit(batch.map(function (ev) {
@@ -342,6 +342,14 @@ var w = floaty.window(sc(
         '<input id="kusers" inputType="number" textColor="#ffffff" textSize="14sp" padding="4"/>' +
         '<button id="btnGenKeys" text="GENERATE + COPY" h="36" bg="#2f7d4a" textColor="#ffffff" textSize="11sp" padding="0" marginTop="2"/>' +
         '<text id="keyOut" text="" textColor="#cfe3ff" textSize="11sp" textIsSelectable="true" padding="2"/>' +
+        '<text text="OWNER - PUBLISH UPDATE (GitHub)" textColor="#e0b84a" textSize="10sp" textStyle="bold" marginTop="8"/>' +
+        inRow("ghrepo", "Repo (owner/name)", "ghbranch", "Branch", "text") +
+        inRow("ghpath", "Path in repo", "ghfile", "File on this phone", "text") +
+        '<text text="GitHub token (Contents: write)" textColor="#8b93a7" textSize="10sp"/>' +
+        '<input id="ghtok" inputType="text" textColor="#ffffff" textSize="14sp" padding="4"/>' +
+        '<button id="btnGhPick" text="BROWSE FILE..." h="36" bg="#3a4a6b" textColor="#ffffff" textSize="11sp" padding="0" marginTop="2"/>' +
+        '<button id="btnGhPub" text="PUBLISH TO GITHUB" h="36" bg="#24292f" textColor="#ffffff" textSize="11sp" padding="0" marginTop="2"/>' +
+        '<text id="ghOut" text="" textColor="#cfe3ff" textSize="11sp" textIsSelectable="true" padding="2"/>' +
       '</vertical>' +
       '<text id="usersLbl" text="USERS" textColor="#6ea8ff" textSize="10sp" textStyle="bold" marginTop="4"/>' +
       inRow("inewuser", "Username", "inewpass", "Password", "text") +
@@ -446,12 +454,59 @@ function updatePreview() {
 }
 
 // key generator inputs: ask for keyboard focus when touched (needed so they can be typed into)
-["kdays", "kcount", "kprefix", "kcustom", "kusers"].forEach(function (id) {
+["kdays", "kcount", "kprefix", "kcustom", "kusers", "ghrepo", "ghbranch", "ghpath", "ghfile", "ghtok"].forEach(function (id) {
   V(id).setOnTouchListener(function (v, e) {
     if (e.getAction() === android.view.MotionEvent.ACTION_DOWN) { w.requestFocus(); v.requestFocus(); }
     return false;
   });
 });
+
+// GitHub token: long-press shows a PASTE popup (the normal Android paste bubble does not appear in a floating window)
+function getClipText() {
+  var t = "";
+  try { t = String(getClip() || ""); } catch (e) {}
+  if (!t) {
+    try {
+      var cm = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE);
+      var c = cm.getPrimaryClip();
+      if (c && c.getItemCount() > 0) t = String(c.getItemAt(0).coerceToText(context) || "");
+    } catch (e) {}
+  }
+  return String(t).trim();
+}
+var pastePop = null;
+function dismissPaste() { try { if (pastePop) pastePop.dismiss(); } catch (e) {} pastePop = null; }
+function attachPaste(id) {
+  var et = V(id);
+  et.setOnLongClickListener(function (v) {
+    var d = context.getResources().getDisplayMetrics().density, Color = android.graphics.Color;
+    function doPaste() {
+      var t = getClipText();
+      if (!t) { toast("Clipboard is empty"); return; }
+      try { et.setText(t); et.setSelection(et.getText().length()); } catch (e) {}
+      toast("Pasted");
+    }
+    try {
+      var tv = new android.widget.TextView(context);
+      tv.setText("PASTE"); tv.setTextColor(Color.WHITE); tv.setTextSize(13);
+      tv.setTypeface(null, android.graphics.Typeface.BOLD);
+      tv.setBackgroundColor(Color.parseColor("#2f5fb3"));
+      tv.setPadding(Math.round(18 * d), Math.round(10 * d), Math.round(18 * d), Math.round(10 * d));
+      dismissPaste();
+      var pop = new android.widget.PopupWindow(tv, -2, -2);
+      pop.setOutsideTouchable(false);
+      pop.setFocusable(false);
+      pastePop = pop;
+      tv.setOnClickListener(function () { dismissPaste(); doPaste(); });
+      pop.showAsDropDown(et, Math.round(8 * d), -(et.getHeight() + Math.round(44 * d)));
+      setTimeout(function () { ui.run(function () { if (pastePop === pop) dismissPaste(); }); }, 2500);
+    } catch (e) { doPaste(); }                 // popup not allowed here -> paste straight away
+    return true;
+  });
+}
+attachPaste("ghtok");
+attachPaste("ghrepo");
+attachPaste("ghpath");
 
 // inputs: ask for keyboard focus when touched, live preview when edited
 ["ix", "iy", "icheck", "iwait", "idx", "idy", "iopen", "ivslot", "ipkg", "ipin", "iuser", "ilock", "ilock2", "icode", "inewuser", "inewpass"].forEach(function (id) {
@@ -1827,6 +1882,7 @@ function setLogMin(m) {
 V("lmin").on("click", function () { setLogMin(!logMin); });
 function quitAll() {
   var who = currentUser;
+  try { closeFp(); } catch (e) {}
   try { closeDg(); } catch (e) {}
   try { closeDaily(); } catch (e) {}
   try { threads.start(function () { fbSignOut(who); }).join(3000); } catch (e) {}
@@ -3157,6 +3213,162 @@ V("btnGenKeys").on("click", function () {
   });
 });
 
+// ===== OWNER: PUBLISH A NEW VERSION TO GITHUB + FIRESTORE =====
+// Uploads the script file from this phone to a PUBLIC GitHub repo (commit-pinned raw link), checks the link
+// serves the same bytes, then writes config/script (version / url / sha256) so users auto-update.
+ui.run(function () { try { V("ghtok").setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD); } catch (e) {} });
+function ghFill() {
+  try {
+    var o = JSON.parse(store.get("gh_cfg", "{}"));
+    V("ghrepo").setText(o.repo || ""); V("ghbranch").setText(o.branch || "main");
+    V("ghpath").setText(o.path || "main_v2.js"); V("ghfile").setText(o.file || "/sdcard/main_v2.js");
+    V("ghtok").setText(o.tok ? credDec(o.tok) : "");
+  } catch (e) {}
+}
+function ghPublish(repo, branch, rpath, file, tok) {      // returns a message for the owner
+  if (!fbAuth) return "Log in first";
+  var bytes;
+  try {
+    if (!files.exists(file)) return "File not found: " + file;
+    bytes = files.readBytes(file);
+  } catch (e) { return "Can't read the file: " + e; }
+  if (bytes.length < 50000 || bytes.length > 900000) return "File size looks wrong (" + bytes.length + " bytes)";
+  var text = String(new java.lang.String(bytes, "UTF-8"));
+  var m = /var APP_VERSION = (\d+);/.exec(text);
+  if (!m) return "No 'var APP_VERSION = n;' line in that file";
+  var ver = parseInt(m[1], 10), cur = 0;
+  try {
+    if (Date.now() > fbAuth.exp && !fbRefresh()) return "Session expired - log in again";
+    var cr = http.get("https://firestore.googleapis.com/v1/" + FS_DOC + "/config/script", { headers: { "Authorization": "Bearer " + fbAuth.idToken } });
+    if (cr.statusCode === 200) { var cf = fbBody(cr).fields || {}; cur = cf.version ? (parseInt(cf.version.integerValue || cf.version.stringValue, 10) || 0) : 0; }
+    else if (cr.statusCode !== 404) return "Can't read config/script (HTTP " + cr.statusCode + ")";
+  } catch (e) { return "No connection to Firebase"; }
+  if (ver <= cur) return "That file is v" + ver + " but v" + cur + " is already published - raise APP_VERSION first";
+  var hash = sha256Hex(bytes);
+  var api = "https://api.github.com/repos/" + repo + "/contents/" + rpath;
+  var H = { "Authorization": "Bearer " + tok, "Accept": "application/vnd.github+json", "User-Agent": "cabal-publisher", "X-GitHub-Api-Version": "2022-11-28" };
+  var oldSha = null, p;
+  try {
+    var g = http.get(api + "?ref=" + encodeURIComponent(branch), { headers: H });
+    if (g.statusCode === 200) oldSha = fbBody(g).sha || null;
+    else if (g.statusCode === 401) return "GitHub rejected the token";
+    else if (g.statusCode !== 404) return "GitHub check failed (HTTP " + g.statusCode + ") - repo / branch name right?";
+    var body = { message: "Release v" + ver, content: String(android.util.Base64.encodeToString(bytes, 2)), branch: branch };
+    if (oldSha) body.sha = oldSha;
+    p = http.request(api, { method: "PUT", contentType: "application/json", headers: H, body: JSON.stringify(body) });
+  } catch (e) { return "No connection to GitHub"; }
+  if (p.statusCode !== 200 && p.statusCode !== 201) return "GitHub upload failed (HTTP " + p.statusCode + ") - token needs Contents: write on this repo";
+  var pj = fbBody(p), csha = pj.commit && pj.commit.sha;
+  if (!csha) return "GitHub answered without a commit id";
+  var url = "https://raw.githubusercontent.com/" + repo + "/" + csha + "/" + rpath;     // pinned to the commit: no stale cache
+  var ok = false;
+  for (var t = 0; t < 4 && !ok; t++) {
+    try { var dl = http.get(url); ok = dl.statusCode === 200 && sha256Hex(dl.body.bytes()) === hash; } catch (e) {}
+    if (!ok) sleep(2500);
+  }
+  if (!ok) return "Uploaded, but the raw link can't be read back (repo must be PUBLIC). Users were NOT updated.";
+  var r = fbCommit([fsDoc("config/script", { version: { int: ver }, url: url, sha256: hash }, ["updatedAt"])]);
+  if (!r || r.statusCode < 200 || r.statusCode >= 300) return "On GitHub, but writing config/script failed" + (r ? " (HTTP " + r.statusCode + ")" : "") + " - are the admin rules set?";
+  return "Published v" + ver + " - users update within ~5 min";
+}
+V("btnGhPub").on("click", function () {
+  dismissPaste();
+  toast("Publish tapped...");
+  if (!acctAdmin) { toast("Owner only - log in with the owner account first"); return; }
+  var repo = String(V("ghrepo").getText()).trim(), branch = String(V("ghbranch").getText()).trim() || "main",
+      rpath = String(V("ghpath").getText()).trim().replace(/^\/+/, ""), file = String(V("ghfile").getText()).trim(),
+      tok = String(V("ghtok").getText()).trim();
+  if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) { toast("Repo must look like owner/name"); return; }
+  if (!/^[\w.\/-]+$/.test(branch)) { toast("Branch name has odd characters"); return; }
+  if (!/^[\w.\/-]+\.js$/.test(rpath) || rpath.indexOf("..") >= 0) { toast("Path in repo must be like main_v2.js"); return; }
+  if (!file) { toast("Type the file path on this phone"); return; }
+  if (tok.length < 20) { toast("Paste your GitHub token"); return; }
+  try { store.put("gh_cfg", JSON.stringify({ repo: repo, branch: branch, path: rpath, file: file, tok: credEnc(tok) })); } catch (e) {}
+  releaseFocus();
+  toast("Publishing...");
+  threads.start(function () {
+    var msg;
+    try { msg = ghPublish(repo, branch, rpath, file, tok); } catch (e) { msg = "Publish error: " + e; }
+    toast(msg);
+    ui.run(function () { V("ghOut").setText(msg); });
+  });
+});
+
+// ===== OWNER: FILE PICKER (fills "File on this phone") =====
+var fpw = null, fpDir = "/sdcard";
+function closeFp() { if (fpw) { try { fpw.close(); } catch (e) {} fpw = null; } }
+function fpRender() {
+  if (!fpw) return;
+  var box = fpw.fpItems, d = context.getResources().getDisplayMetrics().density, Color = android.graphics.Color;
+  function pad(v, a, b, c, e) { v.setPadding(Math.round(a * d), Math.round(b * d), Math.round(c * d), Math.round(e * d)); }
+  function add(label, color, fn) {
+    var tv = new android.widget.TextView(context);
+    tv.setText(label); tv.setTextColor(Color.parseColor(color)); tv.setTextSize(12); pad(tv, 8, 9, 8, 9);
+    tv.setOnClickListener(fn);
+    box.addView(tv);
+  }
+  box.removeAllViews();
+  try { fpw.fpPath.setText(fpDir); } catch (e) {}
+  var names = [], dirs = [], js = [];
+  try { names = files.listDir(fpDir) || []; } catch (e) {}
+  var base = (fpDir === "/" ? "" : fpDir) + "/";
+  for (var i = 0; i < names.length; i++) {
+    var n = String(names[i]), full = base + n;
+    try {
+      if (files.isDir(full)) dirs.push(n);
+      else if (/\.js$/i.test(n)) { var jf = new java.io.File(full); js.push({ n: n, full: full, kb: Math.round(jf.length() / 1024), t: jf.lastModified() }); }
+    } catch (e) {}
+  }
+  dirs.sort(function (a, b) { return a.toLowerCase() < b.toLowerCase() ? -1 : 1; });
+  js.sort(function (a, b) { return b.t - a.t; });                      // newest file first
+  if (fpDir !== "/") add("\u2191  .. (up)", "#6ea8ff", function () {
+    var pf = null; try { pf = new java.io.File(fpDir).getParent(); } catch (e) {}
+    fpDir = pf ? String(pf) : "/"; fpRender();
+  });
+  dirs.forEach(function (n) { add("\u25B8 " + n, "#e0b84a", function () { fpDir = base + n; fpRender(); }); });
+  js.forEach(function (f) {
+    add(f.n + "   " + f.kb + " KB   " + new Date(f.t).toLocaleDateString(), "#ffffff", function () {
+      V("ghfile").setText(f.full);
+      if (!String(V("ghpath").getText()).trim()) V("ghpath").setText(f.n);
+      toast("Selected: " + f.n);
+      closeFp();
+    });
+  });
+  if (!dirs.length && !js.length) add("no folders or .js files here (or storage access is off)", "#6f778a", function () {});
+}
+function openFp() {
+  fpw = floaty.window(sc(
+    '<vertical w="300" bg="#F2111722" padding="4">' +
+      '<horizontal gravity="center_vertical">' +
+        '<text id="fpHdr" text="PICK SCRIPT FILE (drag here)" textColor="#6ea8ff" textSize="12sp" textStyle="bold" layout_weight="1" padding="6"/>' +
+        '<text id="fpClose" text="\u2715" textColor="#ffffff" textSize="16sp" textStyle="bold" padding="8"/>' +
+      '</horizontal>' +
+      '<text id="fpPath" text="" textColor="#8b93a7" textSize="10sp" padding="4"/>' +
+      '<ScrollView h="280" bg="#0b0e13" marginTop="2"><vertical id="fpItems"/></ScrollView>' +
+      '<text text="tap a .js file to select it (newest first)" textColor="#6f778a" textSize="9sp" padding="4"/>' +
+    '</vertical>'
+  ));
+  fpw.setPosition(40, 120);
+  try { fpw.disableFocus(); } catch (e) {}
+  var fx0, fy0, fwx, fwy;
+  fpw.fpHdr.setOnTouchListener(function (view, event) {
+    switch (event.getAction()) {
+      case 0: fx0 = event.getRawX(); fy0 = event.getRawY(); fwx = fpw.getX(); fwy = fpw.getY(); return true;
+      case 2: fpw.setPosition(fwx + (event.getRawX() - fx0), fwy + (event.getRawY() - fy0)); return true;
+    }
+    return true;
+  });
+  fpw.fpClose.on("click", closeFp);
+  fpRender();
+}
+V("btnGhPick").on("click", function () {
+  if (!acctAdmin) { toast("Owner only"); return; }
+  if (fpw) { closeFp(); return; }                                       // button toggles the picker
+  releaseFocus();
+  try { var pf = new java.io.File(String(V("ghfile").getText()).trim()).getParentFile(); if (pf && pf.isDirectory()) fpDir = String(pf.getAbsolutePath()); } catch (e) {}
+  openFp();
+});
+
 var forgotAt = 0;
 V("btnForgot").on("click", function () {   // Firebase sends the reset link by email
   var email = cleanName(V("iuser").getText());
@@ -3190,13 +3402,14 @@ function applyLock(lock) {
       V("iuser").setText("");
       V("ilock2").setText(""); V("icode").setText("");
       regMode = false;
-      acctAdmin = false; V("keyPanel").setVisibility(View.GONE); V("keyOut").setText(""); closeDg(); closeDaily();
+      acctAdmin = false; V("ghtok").setText(""); V("ghOut").setText(""); V("keyPanel").setVisibility(View.GONE); V("keyOut").setText(""); closeDg(); closeDaily(); closeFp();
       renderLock();
       fillSaved();
       releaseFocus();
     } else {
       var showPanel = fbOn() && acctAdmin;
       V("keyPanel").setVisibility(showPanel ? View.VISIBLE : View.GONE);
+      if (showPanel) { try { ghFill(); } catch (e) {} }
       try { V("sAutoLogin").setVisibility(acctAdmin ? View.VISIBLE : View.GONE); if (!acctAdmin) V("sAutoLogin").setChecked(false); } catch (e) {}
       if (showPanel) { if (!String(V("kdays").getText())) V("kdays").setText("30"); if (!String(V("kcount").getText())) V("kcount").setText("1"); if (!String(V("kprefix").getText())) V("kprefix").setText("CABAL"); if (!String(V("kusers").getText())) V("kusers").setText("10"); }
       V("usersLbl").setText("USERS  (logged in: " + currentUser + (acctExp && !acctAdmin ? " | expires " + new Date(acctExp).toLocaleDateString() : "") + ")");

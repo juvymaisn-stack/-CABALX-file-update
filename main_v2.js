@@ -19,7 +19,7 @@
 //  Admin can also set/clear users/<uid>.expiresAt (timestamp) in the console at any time.
 //  IP LOCK: only FB.maxPerIp accounts can be created from one public IP (stored hashed in Firestore "ips").
 
-var APP_VERSION = 4;          // bump this on every release you publish (see AUTO UPDATE below)
+var APP_VERSION = 5;          // bump this on every release you publish (see AUTO UPDATE below)
 var GW = 2093, GH = 1177;
 var store = storages.create("cabal_respawn_redfinger");
 
@@ -168,8 +168,17 @@ function checkUpdate(manual) {                    // manual = the UPDATE SCRIPT 
     if (!m || parseInt(m[1], 10) !== ver) { say("file rejected (APP_VERSION inside the file is not " + ver + ")"); return; }
     var path = String(engines.myEngine().source);
     if (!/\.js$/.test(path)) { say("can't find this script's own file (" + path + ")"); return; }
-    try { files.copy(path, path + ".bak"); } catch (e) {}              // previous version kept as <script>.js.bak
-    files.writeBytes(path, bytes);
+    var tmp = path + ".new", bak = path + ".v" + APP_VERSION + ".bak";   // every old version is kept: <script>.js.v4.bak, .v5.bak ...
+    try {
+      files.writeBytes(tmp, bytes);                                      // 1) write beside the script, never over it
+      var back = files.readBytes(tmp);
+      if (!back || back.length !== bytes.length || sha256Hex(back) !== want) { files.remove(tmp); say("write check failed - keeping v" + APP_VERSION); return; }
+      if (files.copy(path, bak) !== true || !files.exists(bak)) { files.remove(tmp); say("can't make a backup - update cancelled, keeping v" + APP_VERSION); return; }
+      if (files.move(tmp, path) !== true) {                               // 2) swap in; fall back to a plain overwrite if rename is refused
+        files.writeBytes(path, bytes);
+        try { files.remove(tmp); } catch (e2) {}
+      }
+    } catch (e) { try { files.remove(tmp); } catch (e3) {} say("install failed (" + e + ") - keeping v" + APP_VERSION); return; }
     log("update: v" + ver + " installed - restarting");
     toast("Script updated to v" + ver + " - restarting");
     engines.execScriptFile(path, { delay: 2500 });

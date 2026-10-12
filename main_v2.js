@@ -19,7 +19,7 @@
 //  Admin can also set/clear users/<uid>.expiresAt (timestamp) in the console at any time.
 //  IP LOCK: only FB.maxPerIp accounts can be created from one public IP (stored hashed in Firestore "ips").
 
-var APP_VERSION = 2;          // bump this on every release you publish (see AUTO UPDATE below)
+var APP_VERSION = 1;          // bump this on every release you publish (see AUTO UPDATE below)
 var GW = 2093, GH = 1177;
 var store = storages.create("cabal_respawn_redfinger");
 
@@ -1738,7 +1738,7 @@ function stopEngine() {
 function haltAll() {                    // logout / expiry / wrong device: stop the play engine, the RESPAWN script AND the daily-dungeon queue
   stopEngine();
   try { stopRespawn(); } catch (e) {}
-  dgCancel = !!dgBusy; dgSel = {}; dgPending = false; dgGoAt = 0; dgArmed = false;
+  dgCancel = !!dgBusy; dgTried = {}; dgForce = {}; dgPending = false; dgGoAt = 0; dgArmed = false;
   try { dgBtnSync(); } catch (e) {}
 }
 
@@ -1784,7 +1784,7 @@ V("btnGame").on("click", function () {
 });   // own script: independent of the play button
 V("btnDG").on("click", function () {
   if (dgBusy || dgPending || dgArmed) {                        // ON -> OFF: stop / disarm
-    dgCancel = !!dgBusy; dgSel = {}; dgPending = false; dgGoAt = 0; dgArmed = false;
+    dgCancel = !!dgBusy; dgTried = {}; dgForce = {}; dgPending = false; dgGoAt = 0; dgArmed = false;
     toast("Daily DG OFF");
   } else {                                                     // OFF -> ON
     dgArmed = true;                                            // button turns ON right away
@@ -2551,6 +2551,7 @@ function dgInDungeon() {      // the cyan dungeon countdown is on screen = the d
 }
 function dgRunsGet() { try { var n = parseInt(store.get("dg_runs", 1), 10); return isNaN(n) ? 1 : Math.max(1, Math.min(99, n)); } catch (e) { return 1; } }
 function dgAutoGet() { return false; }   // AUTO NEXT removed: only dungeons switched ON are ever run (old saved setting is ignored)
+var dgForce = {};                         // dungeons already done today that you switched ON anyway (tapped twice): they run again
 var dgAutoRun = false, dgTried = {};     // dgAutoRun: this queue keeps going with the other dungeons; dgTried: already attempted this queue
 function dgRunsSet(n) { n = Math.max(1, Math.min(99, n)); try { store.put("dg_runs", n); } catch (e) {} return n; }
 function dayKey() { var d = new Date(); return d.getFullYear() + "-" + (d.getMonth() + 1) + "-" + d.getDate(); }
@@ -2565,9 +2566,9 @@ function dgSelSave() {                                                        //
   return names.length;
 }
 function dgSelSaved() { try { var a = JSON.parse(store.get("dg_on", "[]")); return Array.isArray(a) ? a : []; } catch (e) { return []; } }
-function dgSelLoadIfEmpty() {                                                 // put the saved ON dungeons back (not the ones already done today)
+function dgSelLoadIfEmpty() {                                                 // put the saved ON dungeons back
   if (dgSelCount() > 0) return;
-  dgSelSaved().forEach(function (n) { if (!dgDone(n)) dgSel[n] = true; });
+  dgSelSaved().forEach(function (n) { dgSel[n] = true; });   // saved ON stays ON for good (a dungeon done today is simply skipped)
 }
 function isBtnGrey(c) {         // greyed-out button (no entry item): flat grey-blue, never bright
   var r = colors.red(c), g = colors.green(c), b = colors.blue(c);
@@ -2721,7 +2722,7 @@ function dgBtnSync() {      // keeps the main-panel DAILY DG button in step with
 setInterval(dgBtnSync, 1000);
 function dgNextSel() {      // first dungeon (in list order) that is switched ON; with AUTO NEXT, then the first one not done today
   var i;
-  for (i = 0; i < DAILY_LIST.length; i++) if (dgSel[DAILY_LIST[i].name]) return DAILY_LIST[i];
+  for (i = 0; i < DAILY_LIST.length; i++) { var nm = DAILY_LIST[i].name; if (dgSel[nm] && !dgTried[nm] && (!dgDone(nm) || dgForce[nm])) return DAILY_LIST[i]; }   // ON stays ON; done-today ones are skipped
   if (dgBusy && dgAutoRun) {
     for (i = 0; i < DAILY_LIST.length; i++) {
       var n = DAILY_LIST[i].name;
@@ -2915,7 +2916,7 @@ function dgRunQueue() {
           log("DAILY DG: error in " + it.name + " (" + ed + ") - going on with the next dungeon");   // one failing dungeon never switches the whole DAILY DG off
           try { dgCloseSelect(); } catch (ecs2) { if (ecs2 === "cancelled") throw ecs2; }
         }
-        dgSel[it.name] = false;                                              // this dungeon is finished (or could not start): next ON dungeon
+        // the dungeon stays switched ON (permanent after SAVE); dgTried makes the queue go on with the next ON dungeon
         if (halt) break;
         var nx = dgNextSel();
         if (nx) log("DAILY DG: next -> " + nx.name + (dgSel[nx.name] ? "" : "  (auto next)"));
@@ -2924,8 +2925,7 @@ function dgRunQueue() {
       if (e === "cancelled") { log("DAILY DG: stopped"); toast("Daily DG stopped"); }
       else log("daily dg error: " + e);
     } finally {
-      dgBusy = false; dgCur = ""; dgCancel = false; dgSel = {}; dgArmed = false; dgAutoRun = false;
-      try { dgSelLoadIfEmpty(); } catch (el) {}                  // saved ON dungeons that did not run today stay ON
+      dgBusy = false; dgCur = ""; dgCancel = false; dgTried = {}; dgForce = {}; dgArmed = false; dgAutoRun = false;   // ON switches are kept
     }
   });
 }
@@ -2968,7 +2968,7 @@ function dailyRender() {
     b.setBackgroundColor(Color.parseColor(isOn ? "#2f7d4a" : "#3a4152")); pad(b, 16, 8, 16, 8);
     b.setOnClickListener(function () {
       if (dgSel[it.name]) {                                                   // ON -> OFF
-        if (dgBusy && dgCur === it.name) { dgCancel = true; dgSel = {}; toast("Stopping..."); }   // the running one: stop the whole queue
+        if (dgBusy && dgCur === it.name) { dgCancel = true; dgSel[it.name] = false; toast("Stopping..."); }   // the running one: stop the whole queue
         else { dgSel[it.name] = false; toast("Removed: " + it.name); }
         dailyRender(); return;
       }
@@ -2976,7 +2976,7 @@ function dailyRender() {
       if (dgDone(it.name) && !(dgLastTap === it.name && now - dgLastAt < 6000)) {
         dgLastTap = it.name; dgLastAt = now; toast("Done today - tap again to run anyway"); return;
       }
-      dgSel[it.name] = true;                                                  // OFF -> ON
+      dgSel[it.name] = true; if (dgDone(it.name)) dgForce[it.name] = true;    // OFF -> ON (done today + tapped twice = run it again)
       if (dgBusy) { toast("Queued: " + it.name); dailyRender(); return; }    // added to the running queue
       toast("ON: " + it.name + " - press START DG when ready");
       dailyRender();

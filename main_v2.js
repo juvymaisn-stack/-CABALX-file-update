@@ -19,8 +19,8 @@
 //  Admin can also set/clear users/<uid>.expiresAt (timestamp) in the console at any time.
 //  IP LOCK: only FB.maxPerIp accounts can be created from one public IP (stored hashed in Firestore "ips").
 
-var APP_VERSION = 7;          // bump this on every release you publish (see AUTO UPDATE below) - must stay a whole number
-var APP_LABEL = "7";          // what the panel shows; the updater compares APP_VERSION only
+var APP_VERSION = 8;          // bump this on every release you publish (see AUTO UPDATE below) - must stay a whole number
+var APP_LABEL = "8";          // what the panel shows; the updater compares APP_VERSION only
 var GW = 2093, GH = 1177;
 var store = storages.create("cabal_respawn_redfinger");
 
@@ -157,7 +157,7 @@ var DBG = (function () {
     try {
       if (!d.dir) return;
       var p = d.dir + "dg_runs.csv", f = jfile(p);
-      if (f.exists() && f.length() > 512 * 1024) { var o = jfile(d.dir + "dg_runs.old.csv"); if (o.exists()) o.delete(); f.renameTo(o); }
+      if (f.exists() && f.length() > 4 * 1024 * 1024) { var o = jfile(d.dir + "dg_runs.old.csv"); if (o.exists()) o.delete(); f.renameTo(o); }
       var fresh = !jfile(p).exists(), m = mem();
       put(p, (fresh ? DG_HDR : "") + [stamp(), d.sid, csv(mode), csv(name), csv(run), csv(ev), csv(detail), (el === undefined ? "" : el), m.used + "/" + m.max].join(",") + "\n", true);
     } catch (e) {}
@@ -175,7 +175,7 @@ var DBG = (function () {
     var r = d.dgNow; if (!r || r.done) return;
     if (ev === "ENTERED") { if (r.entered) return; r.entered = true; }
     dgRow(r.mode, r.name, r.rn + "/" + r.total, ev, detail || "", Math.round((Date.now() - r.t0) / 1000));
-    marker(false);
+    if (ev !== "TAP" && ev !== "QUEST_TAP") marker(false);
   };
   d.dgEnd = function (r, result, detail) {
     if (!r || r.done) return; r.done = true;
@@ -555,6 +555,10 @@ var w = floaty.window(sc(
         '</horizontal>' +
         '<text id="btnNARec" text="DG RECORD: ON" textColor="#ffffff" textSize="12sp" textStyle="bold" gravity="center" bg="#2f7d4a" padding="6" marginTop="2"/>' +
         '<text id="naRec" text="DG RECORD: -" textColor="#9fe6a0" textSize="9sp" marginTop="2"/>' +
+        '<horizontal marginTop="2">' +
+          '<text id="btnNAExp" text="EXPORT DG PROFILES" textColor="#ffffff" textSize="10sp" textStyle="bold" gravity="center" bg="#3a4a7a" padding="6" layout_weight="1"/>' +
+          '<text id="btnNAImp" text="IMPORT DG PROFILES" textColor="#ffffff" textSize="10sp" textStyle="bold" gravity="center" bg="#3a4a7a" padding="6" layout_weight="1" marginLeft="4"/>' +
+        '</horizontal>' +
         '<text id="btnNA" text="AUTO DUNGEON RUN: OFF" textColor="#ffffff" textSize="12sp" textStyle="bold" gravity="center" bg="#8a5a1a" padding="8" marginTop="2"/>' +
       '</vertical>' +
       '<Switch id="sAuto" text="Tap AUTO only if off" textColor="#e8ecf5" textSize="12sp" padding="2"/>' +
@@ -772,6 +776,7 @@ var logLines = [];
 function log(s) {
   console.log(s);
   try { DBG.line("LOG", s); } catch (e) {}
+  try { recFromLog(s); } catch (e) {}                     // DG RECORD: entering / loading / AUTO / quest steps
   try { fbLogHook(s); } catch (e) {}
   var t = new Date();
   var hh = ("0" + t.getHours()).slice(-2) + ":" + ("0" + t.getMinutes()).slice(-2) + ":" + ("0" + t.getSeconds()).slice(-2);
@@ -1067,6 +1072,7 @@ function buildMethods() {
 function tapGame(p, label) {
   var m = map(p);
   log("tap " + label + " m" + method + " " + m[0] + "," + m[1]);
+  try { recTap(p, label); } catch (er) {}                 // DG RECORD: every tap during a dungeon run
   METHODS[method](m[0], m[1]);
 }
 
@@ -2998,8 +3004,8 @@ function dgAfterChallenge(it) {
 // The dungeon is over when the cyan countdown timer (top right) has been gone for DG_END_ABSENT ms in a row
 // (the game sends you back to town). Only counts after the timer has been seen at least once.
 function dgWaitFinish() {
-  var seen = false, absentSince = 0, t0 = Date.now();
-  while (Date.now() - t0 < DG_MAX_RUN) {
+  var seen = false, absentSince = 0, t0 = Date.now(), cap = (naOn && naCap) ? naCap : DG_MAX_RUN;
+  while (Date.now() - t0 < cap) {
     sleep(dqTravel ? 500 : 2000); dgChk();                      // look often while the boot is being tapped
     var im = grab();
     if (!im) continue;
@@ -3015,7 +3021,7 @@ function dgWaitFinish() {
     else if (seen) { if (!absentSince) absentSince = Date.now(); if (Date.now() - absentSince >= DG_END_ABSENT) { try { if (!naOn) dqAfterEnd(); } catch (ea) { if (String(ea) === "cancelled") throw ea; } return true; } }
     else if (Date.now() - t0 > 60000) { log("DAILY DG: dungeon timer never appeared (the entry tap was not detected) - skipping to the next dungeon"); return "skip"; }
   }
-  log("DAILY DG: still running after " + Math.round(DG_MAX_RUN / 60000) + " min - queue stopped");
+  log("DAILY DG: still running after " + Math.round(cap / 60000) + " min - queue stopped");
   return false;
 }
 function dgBtnSync() {      // keeps the main-panel DAILY DG button in step with the queue
@@ -3264,17 +3270,128 @@ function naRecSync() {
     } catch (e) {}
   });
 }
-var naEv = { tap: 0, quest: 0, pause: 0, walk: 0 };
-function naEvReset() { naEv = { tap: 0, quest: 0, pause: 0, walk: 0 }; }
-function naEvSummary() { return "taps " + naEv.tap + ", quest changes " + naEv.quest + ", fights/pauses " + naEv.pause + ", walks " + naEv.walk; }
-function naEvAdd(kind, detail) {      // in-dungeon events of AUTO DG -> counters + dg_runs.csv rows (taps: first, then every 10th)
+var naEv = { tap: 0, quest: 0, pause: 0, walk: 0, all: 0, step: 0 };
+function naEvReset() { naEv = { tap: 0, quest: 0, pause: 0, walk: 0, all: 0, step: 0 }; }
+function naEvSummary() { return "steps " + naEv.step + ", all taps " + naEv.all + ", quest taps " + naEv.tap + ", quest changes " + naEv.quest + ", fights/pauses " + naEv.pause + ", walks " + naEv.walk; }
+function naEvAdd(kind, detail) {      // in-dungeon counters of AUTO DG (the csv rows are written by recTap / recFromLog)
   if (!naOn || !naRecOn) return;
+  try { naEv[kind]++; } catch (e) {}
+}
+// ---- DG RECORD (full): EVERY action of a dungeon run goes to dg_runs.csv + a live list in the panel ----
+// TAP / QUEST_TAP = each single tap | STEP = entering steps (open Select Dungeon, pick row, Enter, Challenge, loaded, AUTO ...)
+// QUEST_CHANGE / WALK_START / PAUSE / RESUME = what the character is doing inside the dungeon
+var recLive = [], recRun = null, recLast = null, recUiAt = 0, recTrace = [];   // recTrace = compact timeline of the current run (saved into the dungeon profile)
+function recActive() {
   try {
-    naEv[kind]++;
-    var n = naEv[kind];
-    if (kind === "tap") { if (n === 1 || n % 10 === 0) DBG.dgMark("QUEST_TAP", "quest panel tap #" + n); }
-    else DBG.dgMark(kind === "quest" ? "QUEST_CHANGE" : kind === "walk" ? "WALK_START" : "PAUSE", detail || "");
+    if (!DBG.dgNow || DBG.dgNow.done) return false;
+    if (naOn && !naRecOn) return false;                // AUTO DG with DG RECORD switched OFF
+    return true;
+  } catch (e) { return false; }
+}
+function recMs(r) { var t = Math.round((Date.now() - r.t0) / 1000); return Math.floor(t / 60) + ":" + (t % 60 < 10 ? "0" : "") + (t % 60); }
+function recPush(ev, detail) {
+  if (!recActive()) return;
+  var r = DBG.dgNow;
+  if (recRun !== r) { recRun = r; recLive = []; recLast = null; recTrace = []; }
+  if (ev !== "QUEST_TAP" && recTrace.length < 150) { try { recTrace.push([Math.round((Date.now() - r.t0) / 1000), ev, String(detail || "").slice(0, 60)]); } catch (e) {} }
+  DBG.dgMark(ev, detail);                              // -> dg_runs.csv row (time, run, event, detail, seconds since run start)
+  if (naOn) { if (ev === "STEP") naEv.step++; if (ev === "TAP" || ev === "QUEST_TAP") naEv.all++; }
+  var key = ev, shown = recMs(r) + " " + (ev === "QUEST_TAP" ? "quest tap" : ev === "TAP" ? "tap " + detail : ev.toLowerCase().replace(/_/g, " ") + (detail ? ": " + detail : ""));
+  if (ev === "QUEST_TAP" && recLast && recLast.key === key) { recLast.n++; recLive[recLive.length - 1] = recMs(r) + " quest tap x" + recLast.n; }
+  else { recLive.push(shown.slice(0, 70)); recLast = { key: key, n: 1 }; if (recLive.length > 40) recLive.shift(); }
+  var now = Date.now();
+  if (now - recUiAt > 1000) { recUiAt = now; ui.run(function () { try { V("naRec").setText(naRecText()); } catch (e) {} }); }
+}
+function recTap(p, label) {
+  if (!recActive()) return;
+  var at = p[0] + "," + p[1];
+  if (/quest panel tap|quest boot/.test(String(label))) recPush("QUEST_TAP", at);
+  else recPush("TAP", String(label) + " @ " + at);
+}
+function recFromLog(s) {
+  if (!DBG.dgNow || DBG.dgNow.done) return;
+  s = String(s);
+  if (/^quest panel changed/.test(s)) return recPush("QUEST_CHANGE", s);
+  if (/^dungeon: character running/.test(s)) return recPush("WALK_START", s);
+  if (/^dungeon: .*taps paused/.test(s)) return recPush("PAUSE", s);
+  if (/^dungeon: .*taps continue/.test(s)) return recPush("RESUME", s);
+  if (/^(DAILY DG|AUTO DG|auto dg|auto detect)/i.test(s)) return recPush("STEP", s.replace(/^(DAILY DG|AUTO DG): ?/i, ""));
+}
+// ---- DG PROFILES: every FINISHED AUTO DG run is saved per dungeon (runs, avg / best time, step timeline of the fastest run) ----
+// File: <log dir>/dg_profiles.json (backup copy in storage). AUTO DG loads the profile of the dungeon it runs and uses the average time
+// as a stall limit. EXPORT writes dg_profiles_share.json (also to /sdcard/Download/) - send that file to another user, who puts it in
+// /sdcard/CabalLogs/ or /sdcard/Download/ and taps IMPORT, so their AUTO DG knows the dungeon too.
+var naCap = 0;                                          // ms: max wait for the current AUTO DG run (0 = default DG_MAX_RUN)
+function dgProfDir() { try { if (DBG.dir) return DBG.dir; } catch (e) {} return "/sdcard/CabalLogs/"; }
+function dgProfPath() { return dgProfDir() + "dg_profiles.json"; }
+function dgProfAll() {
+  var o = null;
+  try { var p = dgProfPath(); if (files.exists(p)) o = JSON.parse(files.read(p)); } catch (e) {}
+  if (!o) { try { o = JSON.parse(String(store.get("na_profiles", ""))); } catch (e) {} }
+  if (!o || typeof o !== "object" || !o.profiles) o = { format: "cabal-dg-profiles", v: 1, profiles: {} };
+  return o;
+}
+function dgProfSaveAll(o) {
+  var txt = JSON.stringify(o);
+  try { store.put("na_profiles", txt); } catch (e) {}
+  try { files.ensureDir(dgProfPath()); files.write(dgProfPath(), txt); return true; } catch (e) { log("dg profile save err: " + e); return false; }
+}
+function dgProfGet(name) { try { return dgProfAll().profiles[naNorm(name)] || null; } catch (e) { return null; } }
+function dgProfUpdate(name, secs, trace, summary) {
+  try {
+    if (!name || !secs || secs < 20) return;
+    var o = dgProfAll(), k = naNorm(name), pf = o.profiles[k];
+    if (!pf) pf = o.profiles[k] = { name: String(name), runs: 0, total: 0, min: 0, max: 0, avg: 0, last: 0, best: null };
+    pf.runs++; pf.total += secs; pf.last = secs;
+    pf.min = pf.min ? Math.min(pf.min, secs) : secs; pf.max = Math.max(pf.max, secs);
+    pf.avg = Math.round(pf.total / pf.runs);
+    pf.updated = new Date().toISOString();
+    if (!pf.best || secs <= pf.best.secs) pf.best = { secs: secs, summary: String(summary || ""), steps: (trace || []).slice(0, 150) };
+    dgProfSaveAll(o);
+    log("AUTO DG: profile saved - " + pf.name + ": " + pf.runs + " run(s), avg " + Math.floor(pf.avg / 60) + "m" + (pf.avg % 60) + "s, best " + Math.floor(pf.min / 60) + "m" + (pf.min % 60) + "s");
+  } catch (e) { log("dg profile err: " + e); }
+}
+function dgProfUse(name) {          // before the run is watched: a known dungeon gets a stall limit from its own history
+  naCap = 0;
+  try {
+    var pf = dgProfGet(name);
+    if (!pf || pf.runs < 2) { if (pf) log("AUTO DG: profile for " + pf.name + " has only " + pf.runs + " run - default limit"); return; }
+    naCap = Math.min(DG_MAX_RUN, Math.max(10 * 60000, pf.max * 2 * 1000));
+    log("AUTO DG: profile " + pf.name + " (" + pf.runs + " runs, avg " + Math.floor(pf.avg / 60) + "m" + (pf.avg % 60) + "s, slowest " + Math.floor(pf.max / 60) + "m" + (pf.max % 60) + "s) -> stall limit " + Math.round(naCap / 60000) + " min");
   } catch (e) {}
+}
+function dgProfExport() {
+  try {
+    var o = dgProfAll(), n = Object.keys(o.profiles).length;
+    if (!n) { toast("No profiles yet - finish an AUTO DG run first"); return; }
+    o.exported = new Date().toISOString();
+    var txt = JSON.stringify(o, null, 1), ok = [];
+    var paths = [dgProfDir() + "dg_profiles_share.json", "/sdcard/Download/dg_profiles_share.json"];
+    for (var i = 0; i < paths.length; i++) { try { files.ensureDir(paths[i]); files.write(paths[i], txt); ok.push(paths[i]); } catch (e) {} }
+    log("AUTO DG: exported " + n + " dungeon profile(s) to " + ok.join(" , "));
+    toast(ok.length ? "Exported " + n + " dungeon(s) -> " + ok[ok.length - 1] : "Export failed - no writable folder");
+  } catch (e) { toast("Export error: " + e); }
+}
+function dgProfImport() {
+  try {
+    var src = null, c = ["/sdcard/Download/dg_profiles_share.json", dgProfDir() + "dg_profiles_share.json"];
+    for (var i = 0; i < c.length; i++) { try { if (files.exists(c[i])) { src = c[i]; break; } } catch (e) {} }
+    if (!src) { toast("Put dg_profiles_share.json in /sdcard/Download/ first"); return; }
+    var inc = JSON.parse(files.read(src));
+    if (!inc || inc.format !== "cabal-dg-profiles" || !inc.profiles) { toast("Not a DG profile file"); return; }
+    var o = dgProfAll(), add = 0, upd = 0;
+    Object.keys(inc.profiles).forEach(function (k) {
+      var p = inc.profiles[k];
+      if (!p || !p.name || !(p.runs > 0) || !(p.avg > 0) || !(p.max > 0)) return;      // skip broken entries
+      var mine = o.profiles[k];
+      if (!mine) { o.profiles[k] = p; add++; }
+      else if (p.runs > mine.runs) { o.profiles[k] = p; upd++; }                     // keep whichever has more runs (importing twice changes nothing)
+    });
+    dgProfSaveAll(o);
+    log("AUTO DG: imported profiles from " + src + " - " + add + " new, " + upd + " updated");
+    toast("Imported: " + add + " new, " + upd + " updated");
+    ui.run(function () { try { V("naRec").setText(naRecText()); } catch (e) {} });
+  } catch (e) { toast("Import error: " + e); }
 }
 // ---- AUTO DETECT of the running dungeon: OCR of the screen, matched against the known dungeon names ----
 var naManual = "", naDet = "", naOcrFail = false, NA_NAMES = null;
@@ -3335,12 +3452,18 @@ function naRecGet() {
 }
 function naRecText() {
   if (!naRecOn) return "DG RECORD is OFF - tap the button to record runs";
-  var r = naRecGet();
-  if (!r.hist.length) return "DG RECORD today: no runs yet";
+  var r = naRecGet(), live = "";
+  try {
+    if (DBG.dgNow && !DBG.dgNow.done && recRun === DBG.dgNow && recLive.length) {
+      live = "NOW: " + DBG.dgNow.name + " run " + DBG.dgNow.rn + "/" + DBG.dgNow.total + "\n" + recLive.slice(-8).join("\n") + "\n--\n";
+    }
+  } catch (e) {}
+  var pfl = ""; try { var pp = dgProfGet(naName()); if (pp) pfl = "\nPROFILE " + pp.name + ": " + pp.runs + " runs, avg " + Math.floor(pp.avg / 60) + "m" + (pp.avg % 60) + "s"; } catch (e) {}
+  if (!r.hist.length) return live + "DG RECORD today: no runs yet" + pfl;
   var avg = r.fin ? Math.round(r.secs / r.fin) : 0;
-  var t = "DG RECORD today: " + r.fin + " finished" + (r.fail ? ", " + r.fail + " failed" : "") + (avg ? " | avg " + Math.floor(avg / 60) + "m" + (avg % 60) + "s" : "");
+  var t = live + "DG RECORD today: " + r.fin + " finished" + (r.fail ? ", " + r.fail + " failed" : "") + (avg ? " | avg " + Math.floor(avg / 60) + "m" + (avg % 60) + "s" : "");
   for (var i = r.hist.length - 1; i >= Math.max(0, r.hist.length - 4); i--) t += "\n" + r.hist[i];
-  return t;
+  return t + pfl;
 }
 function naRecAdd(name, result, secs, extra) {
   if (!naRecOn) return;
@@ -3425,11 +3548,13 @@ function naStart(runs) {
         var rec = null; try { rec = DBG.dgBegin("AUTO", nm, done + 1, runs || "?"); } catch (e) {}   // record FIRST
         if (!naEnterOnce()) { try { DBG.dgEnd(rec, "NOT_STARTED", "entry failed / no entries left"); } catch (e) {} naRecAdd(naName(), "NOT_STARTED", 0, ""); break; }
         try { var imD = grab(); if (imD) { naDetectNow(imD, "dungeon"); imD.recycle(); } } catch (e) {}   // inside the dungeon: read its name
+        dgProfUse(naName());
         var wf = dgWaitFinish();
         var elS = rec ? Math.round((Date.now() - rec.t0) / 1000) : 0;
         if (!wf || wf === "skip") { try { DBG.dgEnd(rec, wf === "skip" ? "SKIPPED" : "TIMEOUT", "did not finish normally | " + naEvSummary()); } catch (e) {} naRecAdd(naName(), wf === "skip" ? "SKIPPED" : "TIMEOUT", elS, naEvSummary()); log("AUTO DG: dungeon did not finish normally - stopped"); break; }
         try { DBG.dgEnd(rec, "FINISHED", naEvSummary()); } catch (e) {}
         naRecAdd(naName(), "FINISHED", elS, naEvSummary());
+        dgProfUpdate(naName(), elS, recTrace, naEvSummary());
         done++;
         log("AUTO DG: run " + done + (runs ? "/" + runs : "") + " finished");
         sleep(4000); dgChk();                  // back in town, let the screen settle
@@ -3441,7 +3566,7 @@ function naStart(runs) {
       else { log("auto dg error: " + e); if (DBG.dgNow) naRecAdd(naName(), "ERROR", 0, naEvSummary()); try { DBG.dgEnd(DBG.dgNow, "ERROR", String(e) + " | " + naEvSummary()); } catch (x) {} }
     } finally {
       try { if (DBG.dgNow) DBG.dgEnd(DBG.dgNow, "ABORTED", "queue ended"); DBG.dgQueue("AUTO", "QUEUE_END", "session totals " + JSON.stringify(DBG.dgStats)); } catch (x) {}
-      dgBusy = false; dgCancel = false; naOn = false; naSync();
+      dgBusy = false; dgCancel = false; naOn = false; naCap = 0; naSync();
     }
   });
 }
@@ -3451,6 +3576,8 @@ V("btnNARec").on("click", function () {
   naRecSync();
   toast(naRecOn ? "DG record ON" : "DG record OFF");
 });
+V("btnNAExp").on("click", function () { threads.start(dgProfExport); });
+V("btnNAImp").on("click", function () { threads.start(dgProfImport); });
 V("btnNA").on("click", function () {
   if (naOn) { dgCancel = true; toast("Stopping..."); return; }
   if (dgBusy || dgPending || dgArmed || running || (worker && worker.isAlive()) || respAlive()) { toast("Stop DAILY DG / the other scripts first"); return; }

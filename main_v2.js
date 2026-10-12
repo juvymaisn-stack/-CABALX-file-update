@@ -19,8 +19,8 @@
 //  Admin can also set/clear users/<uid>.expiresAt (timestamp) in the console at any time.
 //  IP LOCK: only FB.maxPerIp accounts can be created from one public IP (stored hashed in Firestore "ips").
 
-var APP_VERSION = 10;         // bump this on every release you publish (see AUTO UPDATE below) - must stay a whole number
-var APP_LABEL = "10";          // what the panel shows; the updater compares APP_VERSION only
+var APP_VERSION = 11;         // bump this on every release you publish (see AUTO UPDATE below) - must stay a whole number
+var APP_LABEL = "10.1";         // what the panel shows; the updater compares APP_VERSION only
 var GW = 2093, GH = 1177;
 var store = storages.create("cabal_respawn_redfinger");
 
@@ -115,8 +115,9 @@ var DBG = (function () {
     try {
       var rt = java.lang.Runtime.getRuntime();
       var used = Math.round((rt.totalMemory() - rt.freeMemory()) / 1048576), max = Math.round(rt.maxMemory() / 1048576);
-      return { used: used, max: max };
-    } catch (e) { return { used: -1, max: -1 }; }
+      var nat = -1; try { nat = Math.round(android.os.Debug.getNativeHeapAllocatedSize() / 1048576); } catch (en) {}
+      return { used: used, max: max, nat: nat };
+    } catch (e) { return { used: -1, max: -1, nat: -1 }; }
   }
   function snapshot() {
     var s = {};
@@ -135,7 +136,7 @@ var DBG = (function () {
       if (!d.state) return;
       var m = mem();
       put(d.state, JSON.stringify({ sid: d.sid, version: (typeof APP_LABEL !== "undefined" ? APP_LABEL : "?") + "/v" + (typeof APP_VERSION !== "undefined" ? APP_VERSION : "?"),
-        start: stamp(d.t0), hb: stamp(), hbMs: Date.now(), clean: !!clean, reason: d.reason, memMB: m.used + "/" + m.max,
+        start: stamp(d.t0), hb: stamp(), hbMs: Date.now(), clean: !!clean, reason: d.reason, memMB: m.used + "/" + m.max + (m.nat >= 0 ? " native " + m.nat + "MB" : ""),
         lastLog: d.lastLine, state: snapshot() }), false);
     } catch (e) {}
   }
@@ -233,7 +234,7 @@ var DBG = (function () {
             if (!d.stalled) { d.stalled = true; line("WARN", "MAIN LOOP STALLED " + Math.round((now - d.lastTick) / 1000) + "s (UI/app may be frozen)"); }
           } else if (d.stalled) { d.stalled = false; line("SYS", "main loop recovered"); }
           if (m.max > 0 && m.used / m.max > 0.85) line("WARN", "LOW MEMORY " + m.used + "/" + m.max + " MB - risk of crash");
-          if (beat % HB_LOG_EVERY === 0) line("HB", "alive " + Math.round((now - d.t0) / 1000) + "s | mem " + m.used + "/" + m.max + "MB | " + JSON.stringify(snapshot()));
+          if (beat % HB_LOG_EVERY === 0) line("HB", "alive " + Math.round((now - d.t0) / 1000) + "s | mem " + m.used + "/" + m.max + "MB native " + m.nat + "MB | " + JSON.stringify(snapshot()));
           marker(false);
         } catch (e) { if (isStop(e)) throw e; }
       }
@@ -1122,6 +1123,44 @@ function applyView(r) {
 // screen), and the library recycles it by itself when a new frame arrives. Recycling it here - or using it after the popup
 // watcher thread recycled it - throws "IllegalStateException: image has been recycled". So every look works on a PRIVATE COPY
 // (callers may recycle the copy freely) and the shared original is never touched.
+// ===== IMAGE JANITOR (native-memory safety net) =====
+// Every screenshot copy handed out by snap()/grab() is registered. Callers recycle their copy right after use; if one is
+// ever missed (an error path, a long wait) the janitor below recycles it, so native bitmap memory can never pile up
+// until Android aborts the app (SIGABRT).
+var IMG_LIVE = [];
+function trackImg(img) { if (img) { try { IMG_LIVE.push({ i: img, t: Date.now() }); } catch (e) {} } return img; }
+function sweepImgs(maxAgeMs) {
+  var now = Date.now(), keep = [], leaked = 0, list = IMG_LIVE;
+  IMG_LIVE = keep;
+  for (var k = 0; k < list.length; k++) {
+    var e = list[k];
+    if (now - e.t <= maxAgeMs) { keep.push(e); continue; }
+    var rec = null;
+    try { rec = !!e.i.isRecycled(); } catch (x) { rec = null; }
+    if (rec !== true) { try { e.i.recycle(); } catch (x2) {} if (rec === false) leaked++; }
+  }
+  return leaked;
+}
+function nativeMB() { try { return Math.round(android.os.Debug.getNativeHeapAllocatedSize() / 1048576); } catch (e) { return -1; } }
+var NATIVE_WARN_MB = 700;
+function startImageJanitor() {
+  var lastWarn = 0;
+  threads.start(function () {
+    while (true) {
+      try {
+        sleep(5000);
+        var nat = nativeMB(), pressure = (nat > NATIVE_WARN_MB);
+        var n = sweepImgs(pressure ? 8000 : 30000);
+        var now = Date.now();
+        if ((n > 0 || pressure) && now - lastWarn > 60000) {
+          lastWarn = now;
+          log("image janitor: freed " + n + " unreleased screenshot(s) | native memory " + nat + " MB" + (pressure ? " (HIGH - forcing cleanup)" : ""));
+        }
+        if (pressure) { try { java.lang.System.gc(); } catch (e2) {} }
+      } catch (e) { if (DBG.isStop(e)) throw e; }
+    }
+  });
+}
 function snap() {
   for (var i = 0; i < 4; i++) {
     var raw = null;
@@ -1130,7 +1169,7 @@ function snap() {
     try {
       var cp = null;
       try { cp = raw.clone(); } catch (ec) { if (/recycled/i.test(String(ec))) throw ec; cp = images.clone(raw); }
-      if (cp) return cp;
+      if (cp) return trackImg(cp);
     } catch (e2) {
       if (!/recycled/i.test(String(e2))) return raw;       // no clone() on this AutoX version: old behaviour
       sleep(80);                                           // shared frame was recycled just now: take the next frame
@@ -1152,7 +1191,7 @@ function grab() {
     }
     if (img) capRetries = 0;
   }
-  else if (capMode === "screencap") { shell("screencap -p " + CAP_FILE, true); img = images.read(CAP_FILE); }
+  else if (capMode === "screencap") { shell("screencap -p " + CAP_FILE, true); img = trackImg(images.read(CAP_FILE)); }
   if (img) {
     var w0 = img.getWidth(), h0 = img.getHeight();
     W = Math.max(w0, h0); H = Math.min(w0, h0);
@@ -1291,7 +1330,7 @@ function startExpiredWatcher() {
     var taps = 0, quietUntil = 0;
     while (true) {
       try {
-        sleep(300);
+        sleep(500);
         if (Date.now() < quietUntil) continue;
         if (!C.autoPopup || !currentUser || !capReady || capMode !== "projection" || !W || !LAND) { taps = 0; sleep(700); continue; }
         var img = null;                                // passive look: never re-requests the capture permission (grab() does, which can break the capture)
@@ -4357,6 +4396,7 @@ V("lockTitle").setOnTouchListener(function (view, event) {
 fillInputs(C);
 try { DBG.start(function (m) { log(m); toast("Last run ended unexpectedly - see log"); }); } catch (e) { }
 threads.start(function () { try { sleep(800); log(permText(showPerms())); } catch (e) {} });
+try { startImageJanitor(); } catch (e) { log("janitor start err: " + e); }
 applyGame();
 gameSync();
 setStatus("idle");

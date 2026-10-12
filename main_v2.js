@@ -19,8 +19,8 @@
 //  Admin can also set/clear users/<uid>.expiresAt (timestamp) in the console at any time.
 //  IP LOCK: only FB.maxPerIp accounts can be created from one public IP (stored hashed in Firestore "ips").
 
-var APP_VERSION = 8;          // bump this on every release you publish (see AUTO UPDATE below) - must stay a whole number
-var APP_LABEL = "8";          // what the panel shows; the updater compares APP_VERSION only
+var APP_VERSION = 9;          // bump this on every release you publish (see AUTO UPDATE below) - must stay a whole number
+var APP_LABEL = "9";          // what the panel shows; the updater compares APP_VERSION only
 var GW = 2093, GH = 1177;
 var store = storages.create("cabal_respawn_redfinger");
 
@@ -869,9 +869,21 @@ function stopRespawn() {
 
 // ===== DEVICE DETECTION (what is this script running on?) =====
 var DEVICE = null;
+// Known emulators. Matched on the Build fields first, then on a package only that emulator ships.
+// Order matters: the specific ones come before the generic Android-emulator entry.
+var EMU_SIGS = [
+  { id: "ld",   name: "LDPlayer",   re: /ldplayer|ldmnq|leidian|dnplayer|ttvm/,                pkgs: ["com.android.flysilkworm", "com.ldmnq.launcher3", "com.android.ldmnq.launcher"] },
+  { id: "bs",   name: "BlueStacks", re: /bluestacks|bstsvc/,                                   pkgs: ["com.bluestacks.home", "com.bluestacks.settings", "com.bluestacks.appmart"] },
+  { id: "nox",  name: "Nox",        re: /\bnox|noxplayer/,                                     pkgs: ["com.vphone.launcher", "com.bignox.app.store.hd"] },
+  { id: "memu", name: "MEmu",       re: /memu|microvirt/,                                      pkgs: ["com.microvirt.launcher", "com.microvirt.memuime"] },
+  { id: "mumu", name: "MuMu",       re: /mumu|nemu/,                                           pkgs: ["com.mumu.launcher", "com.mumu.store"] },
+  { id: "gen",  name: "Genymotion", re: /genymotion|vbox86/,                                   pkgs: [] },
+  { id: "avd",  name: "Android emulator", re: /sdk_gphone|goldfish|ranchu|emulator|vbox/,      pkgs: [] }
+];
+function hasPkg(p) { try { context.getPackageManager().getPackageInfo(p, 0); return true; } catch (e) { return false; } }
 function detectDevice() {
   if (DEVICE) return DEVICE;
-  var d = { brand: "?", model: "?", android: "?", sdk: 0, type: "phone", label: "Phone", w: 0, h: 0, dpi: 0, ratio: 0 };
+  var d = { brand: "?", model: "?", android: "?", sdk: 0, type: "phone", label: "Phone", emu: "", w: 0, h: 0, dpi: 0, ratio: 0, settings: null };
   try {
     var BD = android.os.Build, BV = android.os.Build.VERSION;
     d.brand = String(BD.BRAND); d.model = String(BD.MODEL);
@@ -879,20 +891,72 @@ function detectDevice() {
     var all = [BD.BRAND, BD.MODEL, BD.MANUFACTURER, BD.PRODUCT, BD.DEVICE, BD.HARDWARE, BD.BOARD, BD.FINGERPRINT].join(" ").toLowerCase();
     var isRF = /redfinger/.test(all);
     if (isRF) { d.type = "redfinger"; d.label = "Redfinger"; }
-    else if (/generic|emulator|sdk_gphone|goldfish|ranchu|vbox|nox|ldplayer|bluestacks|memu|genymotion/.test(all)) { d.type = "emulator"; d.label = "Emulator"; }
+    else {
+      var hit = null;
+      for (var i = 0; i < EMU_SIGS.length && !hit; i++) {
+        var sg = EMU_SIGS[i];
+        if (sg.re.test(all)) { hit = sg; break; }
+        for (var j = 0; j < sg.pkgs.length; j++) if (hasPkg(sg.pkgs[j])) { hit = sg; break; }
+      }
+      if (hit) { d.type = "emulator"; d.emu = hit.id; d.label = hit.name; }
+      else if (/generic|emulator|sdk_gphone|goldfish|ranchu|vbox|nox|ldplayer|bluestacks|memu|genymotion/.test(all)) { d.type = "emulator"; d.emu = "other"; d.label = "Emulator"; }
+    }
   } catch (e) {}
   try {
-    var dm = context.getResources().getDisplayMetrics();
-    d.w = Math.max(dm.widthPixels, dm.heightPixels); d.h = Math.min(dm.widthPixels, dm.heightPixels);
-    d.dpi = dm.densityDpi; d.ratio = d.h ? Math.round(d.w / d.h * 100) / 100 : 0;
+    var rs = realScreen();
+    d.w = Math.max(rs.w, rs.h); d.h = Math.min(rs.w, rs.h);
+    d.dpi = rs.dpi; d.ratio = d.h ? Math.round(d.w / d.h * 100) / 100 : 0;
   } catch (e) {}
   DEVICE = d;
   return d;
+}
+// real display size in the current orientation (includes the navigation bar) + density
+function realScreen() {
+  var o = { w: 0, h: 0, dpi: 0 };
+  try {
+    var dm = new android.util.DisplayMetrics();
+    context.getSystemService(android.content.Context.WINDOW_SERVICE).getDefaultDisplay().getRealMetrics(dm);
+    o.w = dm.widthPixels; o.h = dm.heightPixels; o.dpi = dm.densityDpi;
+  } catch (e) {}
+  if (!o.w) {
+    try { var dm2 = context.getResources().getDisplayMetrics(); o.w = dm2.widthPixels; o.h = dm2.heightPixels; o.dpi = dm2.densityDpi; } catch (e2) {}
+  }
+  return o;
+}
+// run a shell command WITHOUT root, with a time limit (never freezes the caller)
+function shText(cmd) {
+  var out = "";
+  var th = threads.start(function () { try { var r = shell(cmd, false); out = String((r && (r.result || r.error)) || ""); } catch (e) { out = ""; } });
+  th.join(2500);
+  try { if (th.isAlive()) th.interrupt(); } catch (e) {}
+  return out;
+}
+// The emulator's OWN screen setting (LDPlayer: Settings > Advanced > Resolution + DPI).
+// "wm size" / "wm density" report exactly what the emulator is set to ("Override" = the value that is really in use).
+// Read lazily (worker threads only) and cached on DEVICE; falls back to the Android display values.
+function emuSettings() {
+  var d = detectDevice();
+  if (d.settings) return d.settings;
+  var st = { w: 0, h: 0, dpi: 0, src: "" };
+  try {
+    var t = shText("wm size"), m = /Override size:\s*(\d+)\s*x\s*(\d+)/i.exec(t) || /Physical size:\s*(\d+)\s*x\s*(\d+)/i.exec(t);
+    if (m) { var a1 = parseInt(m[1], 10), b1 = parseInt(m[2], 10); st.w = Math.max(a1, b1); st.h = Math.min(a1, b1); st.src = "wm"; }
+    t = shText("wm density");
+    m = /Override density:\s*(\d+)/i.exec(t) || /Physical density:\s*(\d+)/i.exec(t);
+    if (m) st.dpi = parseInt(m[1], 10);
+  } catch (e) {}
+  if (!st.w) { var rs = realScreen(); st.w = Math.max(rs.w, rs.h); st.h = Math.min(rs.w, rs.h); st.src = "display"; }
+  if (!st.dpi) st.dpi = realScreen().dpi;
+  d.settings = st;
+  return st;
 }
 function logDevice() {
   var d = detectDevice();
   log("device: " + d.brand + " " + d.model + " | Android " + d.android + " (SDK " + d.sdk + ") | " + d.label);
   log("screen: " + d.w + "x" + d.h + " ratio " + d.ratio + " dpi " + d.dpi);
+  if (d.type === "emulator") {
+    try { var es = emuSettings(); log(d.label + " settings: " + es.w + "x" + es.h + " @" + es.dpi + "dpi (" + es.src + ")"); } catch (e) {}
+  }
   if (d.ratio && Math.abs(d.ratio - GW / GH) > 0.15)
     log("note: ratio differs from 16:9 - taps are scaled by height and centred");
 }
@@ -957,17 +1021,58 @@ var capRetries = 0;
 // Finds the real game picture inside the screen (black bars / cut-outs are skipped), then map()
 // scales and centres every tap on that area instead of on the whole screen.
 var VIEW = null, VIEW_OK = false, VIEW_KEY = "", needFit = true, viewTxt = "";
+// dark pixel / dark line helpers: a black bar is a line where EVERY sample is near black (so dark game scenery is never cut)
+function darkPx(c) { return colors.red(c) < 16 && colors.green(c) < 16 && colors.blue(c) < 16; }
+function lineDark(img, horiz, pos, a0, a1) {
+  for (var i = 0; i < 11; i++) {
+    var q = Math.round(a0 + (a1 - a0) * (0.1 + 0.08 * i));
+    var c = horiz ? images.pixel(img, q, pos) : images.pixel(img, pos, q);
+    if (!darkPx(c)) return false;
+  }
+  return true;
+}
+// cut the black letterbox / pillarbox bars (emulators draw them when the window is not exactly 16:9)
+function trimBars(img, r) {
+  var x0 = r.x, y0 = r.y, x1 = r.x + r.w - 1, y1 = r.y + r.h - 1, n;
+  var capX = Math.round(r.w * 0.3), capY = Math.round(r.h * 0.3);
+  for (n = 0; n < capY && lineDark(img, true, y0, x0, x1); n++) y0++;
+  for (n = 0; n < capY && lineDark(img, true, y1, x0, x1); n++) y1--;
+  for (n = 0; n < capX && lineDark(img, false, x0, y0, y1); n++) x0++;
+  for (n = 0; n < capX && lineDark(img, false, x1, y0, y1); n++) x1--;
+  return { x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 };
+}
 function detectView(img, w0, h0) {
-  var full = { x: 0, y: 0, w: w0, h: h0, ok: false };
+  var dev = detectDevice(), emu = (dev.type === "emulator");
+  var full = { x: 0, y: 0, w: w0, h: h0, ok: false, src: "screen", cw: Math.max(w0, h0), ch: Math.min(w0, h0) };
+  var win = null;
   try {
     var root = auto.root;                      // window of the app on screen = the game window
     if (root) {
       var bd = root.bounds();
-      var l = bd.left, t = bd.top, r = Math.min(bd.right, w0), bt = Math.min(bd.bottom, h0);
-      if (l >= 0 && t >= 0 && r - l >= w0 * 0.5 && bt - t >= h0 * 0.5) return { x: l, y: t, w: r - l, h: bt - t, ok: true };
+      var sx = 1, sy = 1;
+      if (emu) {                               // emulator: window bounds are in real display pixels; the capture may be another size
+        var rs = realScreen();
+        if (rs.w && rs.h) {
+          var fx = w0 / rs.w, fy = h0 / rs.h;
+          if (fx > 0.2 && fx < 5 && Math.abs(fx - fy) < 0.02) { sx = fx; sy = fy; }
+        }
+      }
+      var l = Math.round(bd.left * sx), t = Math.round(bd.top * sy), r = Math.min(Math.round(bd.right * sx), w0), bt = Math.min(Math.round(bd.bottom * sy), h0);
+      if (l >= 0 && t >= 0 && r - l >= w0 * 0.5 && bt - t >= h0 * 0.5) win = { x: l, y: t, w: r - l, h: bt - t, ok: true, src: "window", cw: full.cw, ch: full.ch };
     }
   } catch (e) {}
-  return full;                                 // unknown -> whole screen
+  if (!emu) return win || full;                // phones / Redfinger: unchanged (window, else whole screen)
+  // ---- emulator: start from the window (or the whole screen) and cut black bars inside it ----
+  var base = win || { x: 0, y: 0, w: w0, h: h0, ok: false, src: "screen", cw: full.cw, ch: full.ch };
+  try {
+    var tr = trimBars(img, base);
+    var ar = tr.h > 0 ? tr.w / tr.h : 0;
+    if (tr.w >= w0 * 0.5 && tr.h >= h0 * 0.5 && ar >= 1.2 && ar <= 2.5) {
+      var cut = (tr.w !== base.w || tr.h !== base.h);
+      return { x: tr.x, y: tr.y, w: tr.w, h: tr.h, ok: true, src: (win ? "window" : "screen") + (cut ? "+bars cut" : ""), cw: full.cw, ch: full.ch };
+    }
+  } catch (e2) { log("bar scan err: " + e2); }
+  return base;                                 // blank / unreadable picture: keep the window (or the whole screen) and retry later
 }
 function refitView() {                // called by START / TEST: measure the game screen before any tap
   if (!C.autoFit) return;
@@ -982,8 +1087,20 @@ function showView(txt) {
 function applyView(r) {
   VIEW = r; VIEW_OK = r.ok;
   var sc2 = Math.min(r.w / GW, r.h / GH);
-  var txt = "area " + r.x + "," + r.y + "  " + r.w + "x" + r.h + "  scale " + (Math.round(sc2 * 1000) / 1000) + (r.ok ? "" : "  (full screen, retrying)");
-  if (txt !== viewTxt) { log("game " + txt); showView(txt); }
+  var txt = "area " + r.x + "," + r.y + "  " + r.w + "x" + r.h + "  scale " + (Math.round(sc2 * 1000) / 1000) + (r.src ? "  [" + r.src + "]" : "") + (r.ok ? "" : "  (full screen, retrying)");
+  try {
+    var dev = detectDevice();
+    if (dev.type === "emulator") {
+      var es = emuSettings();
+      var head = dev.label + "  settings " + es.w + "x" + es.h + " @" + es.dpi + "dpi";
+      if (r.cw && es.w && (Math.abs(r.cw - es.w) > 2 || Math.abs(r.ch - es.h) > 2)) {
+        head += "  | capture " + r.cw + "x" + r.ch + " (differs from emulator setting)";
+        log(dev.label + ": capture " + r.cw + "x" + r.ch + " differs from the emulator setting " + es.w + "x" + es.h + " - taps use the capture size");
+      }
+      txt = head + "\n" + txt;
+    }
+  } catch (e) {}
+  if (txt !== viewTxt) { log("game " + txt.replace(/\n/g, " | ")); showView(txt); }
 }
 
 // captureScreen() returns a SHARED image: the very same object again while the screen has not changed (a static loading
@@ -1026,7 +1143,7 @@ function grab() {
     W = Math.max(w0, h0); H = Math.min(w0, h0);
     LAND = (w0 >= h0);
     var vk = w0 + "x" + h0;
-    if (vk !== VIEW_KEY) { VIEW_KEY = vk; VIEW = null; VIEW_OK = false; needFit = true; }   // rotated / resized
+    if (vk !== VIEW_KEY) { VIEW_KEY = vk; VIEW = null; VIEW_OK = false; needFit = true; DEVICE = null; }   // rotated / resized (DEVICE re-read: emulator resolution may have changed)
     if (needFit && C.autoFit && LAND) {
       needFit = false;
       try { applyView(detectView(img, w0, h0)); } catch (e) { log("fit err: " + e); }

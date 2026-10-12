@@ -19,7 +19,8 @@
 //  Admin can also set/clear users/<uid>.expiresAt (timestamp) in the console at any time.
 //  IP LOCK: only FB.maxPerIp accounts can be created from one public IP (stored hashed in Firestore "ips").
 
-var APP_VERSION = 5;          // bump this on every release you publish (see AUTO UPDATE below)
+var APP_VERSION = 6;          // bump this on every release you publish (see AUTO UPDATE below) - must stay a whole number
+var APP_LABEL = "5.1";        // what the panel shows; the updater compares APP_VERSION only
 var GW = 2093, GH = 1177;
 var store = storages.create("cabal_respawn_redfinger");
 
@@ -291,6 +292,8 @@ var w = floaty.window(sc(
       '<text id="btnForget" visibility="gone" text="Forget saved login" textColor="#9aa0a6" textSize="11sp" gravity="center" padding="4"/>' +
       '<button id="btnExitLock" text="EXIT" h="34" bg="#7a2a2a" textColor="#ffffff" textSize="11sp" padding="0" marginTop="4"/>' +
     '</vertical>' +
+    // ---- game tag: shows which game is selected (colour changes with the game) ----
+    '<text id="gameTag" text="CABAL MOBILE" textColor="#ffffff" textSize="10sp" textStyle="bold" gravity="center" bg="#2f5fb3" padding="3" visibility="gone"/>' +
     // ---- header (hidden while logged out) ----
     '<horizontal id="hdr" gravity="center_vertical">' +
       '<button id="fb" text="▶" w="46" h="46" textSize="16sp" textColor="#ffffff" bg="#2e7d32" padding="0"/>' +
@@ -324,6 +327,16 @@ var w = floaty.window(sc(
       '<input id="ivslot" inputType="number" textColor="#ffffff" textSize="14sp" padding="4"/>' +
       '<text id="btnResp" text="RESPAWN: OFF" textColor="#ffffff" textSize="12sp" textStyle="bold" gravity="center" bg="#3a4152" padding="8" marginTop="4"/>' +
       '<text id="btnDG" text="DAILY DG: OFF" textColor="#ffffff" textSize="12sp" textStyle="bold" gravity="center" bg="#3a4152" padding="8" marginTop="4"/>' +
+      // ---- AUTO DG for players without premium: shown for every user, in both games ----
+      '<vertical id="naBox" bg="#33260f" padding="4" marginTop="4">' +
+        '<text text="AUTO DG - NON PREMIUM USER" textColor="#e0b84a" textSize="10sp" textStyle="bold"/>' +
+        '<text text="Stand at the dungeon gate, open Select Dungeon once and pick the dungeon. Presses AUTO attack, taps the quest text to walk to each quest. Runs: 0 = until no entries are left." textColor="#a8a08a" textSize="9sp"/>' +
+        '<horizontal gravity="center_vertical">' +
+          '<text text="Runs" textColor="#e8ecf5" textSize="11sp" layout_weight="1"/>' +
+          '<input id="inaruns" inputType="number" textColor="#ffffff" textSize="14sp" padding="4" w="70"/>' +
+        '</horizontal>' +
+        '<text id="btnNA" text="AUTO DUNGEON RUN: OFF" textColor="#ffffff" textSize="12sp" textStyle="bold" gravity="center" bg="#8a5a1a" padding="8" marginTop="2"/>' +
+      '</vertical>' +
       '<Switch id="sAuto" text="Tap AUTO only if off" textColor="#e8ecf5" textSize="12sp" padding="2"/>' +
       '<Switch id="sConsole" text="Show console" textColor="#e8ecf5" textSize="12sp" padding="2"/>' +
       '<text id="btnGame" text="GAME: CABAL MOBILE  (tap to switch)" textColor="#ffffff" textSize="12sp" textStyle="bold" gravity="center" bg="#2f5fb3" padding="8" marginTop="4"/>' +
@@ -367,7 +380,7 @@ var w = floaty.window(sc(
         '<button id="btnDelUser" text="DEL USER" layout_weight="1" h="36" bg="#7a2a2a" textColor="#ffffff" textSize="11sp" padding="0" marginLeft="4"/>' +
         '<button id="btnLogout" text="LOGOUT" layout_weight="1" h="36" bg="#5a4a1a" textColor="#ffffff" textSize="11sp" padding="0" marginLeft="4"/>' +
       '</horizontal>' +
-      '<button id="btnUpdate" text="UPDATE SCRIPT  (v' + APP_VERSION + ')" w="match_parent" h="36" bg="#6a3fa0" textColor="#ffffff" textSize="11sp" padding="0" marginTop="4"/>' +
+      '<button id="btnUpdate" text="UPDATE SCRIPT  (v' + APP_LABEL + ')" w="match_parent" h="36" bg="#6a3fa0" textColor="#ffffff" textSize="11sp" padding="0" marginTop="4"/>' +
       '<horizontal marginTop="4">' +
         '<button id="btnTest" text="TEST" layout_weight="1" h="40" bg="#2f5fb3" textColor="#ffffff" textSize="12sp" padding="0"/>' +
         '<button id="btnSave" text="SAVE" layout_weight="1" h="40" bg="#2a3345" textColor="#ffffff" textSize="12sp" padding="0" marginLeft="4"/>' +
@@ -1832,12 +1845,18 @@ function gameSync() {
     try {
       V("btnGame").setText("GAME: " + (isRA() ? "CABAL RETURN OF ACTION" : "CABAL MOBILE") + "  (tap to switch)");
       V("btnGame").setBackgroundColor(android.graphics.Color.parseColor(isRA() ? "#8a5a1a" : "#2f5fb3"));
+      V("gameTag").setText(isRA() ? "CABAL: RETURN OF ACTION" : "CABAL MOBILE");
+      V("gameTag").setBackgroundColor(android.graphics.Color.parseColor(isRA() ? "#8a5a1a" : "#2f5fb3"));
+      V("rootP").setBackgroundColor(android.graphics.Color.parseColor(isRA() ? "#F2241a0e" : "#F2111722"));   // whole panel gets a warm tint in RA
+      V("gameTag").setVisibility(V("hdr").getVisibility());   // follows the header: hidden while logged out
+      V("naBox").setVisibility(android.view.View.VISIBLE);   // AUTO DG - NON PREMIUM is for every user / both games
+      V("inaruns").setText(String(store.get("na_runs", 0)));
       V("ipkg").setText(String((isRA() ? C.pkgRA : C.pkg) || ""));
     } catch (e) {}
   });
 }
 V("btnGame").on("click", function () {
-  if (running || (worker && worker.isAlive()) || respAlive()) { toast("Stop first, then switch game"); return; }
+  if (running || (worker && worker.isAlive()) || respAlive() || dgBusy) { toast("Stop first, then switch game"); return; }
   releaseFocus();
   var t = String(V("ipkg").getText()).trim();
   if (isRA()) C.pkgRA = t; else C.pkg = t;            // keep what was typed for the game we are leaving
@@ -2568,7 +2587,7 @@ function dqWatch(img) {                          // img = fresh screenshot taken
   // Inside the dungeon the boot keeps being tapped the whole time, and only attacking / questing (hold above) pauses it.
   if (now - dqLastTap >= DQ_TAP_EVERY) {                       // continuous tapping while walking
     dqLastTap = now;
-    tapGame(P.boot, "quest boot");
+    tapGame(naOn ? P_NA_QUEST : P.boot, naOn ? "quest panel tap" : "quest boot");   // AUTO DG (RA): tap the quest text like a manual tap
     tapped = true;
   }
   return tapped;
@@ -2767,7 +2786,7 @@ function dgWaitFinish() {
       if (!seen && dgCur) { try { store.put("dg_done_" + dgCur, dayKey()); } catch (e) {} }   // dungeon really started -> done today
       seen = true; absentSince = 0;
     }
-    else if (seen) { if (!absentSince) absentSince = Date.now(); if (Date.now() - absentSince >= DG_END_ABSENT) { try { dqAfterEnd(); } catch (ea) { if (String(ea) === "cancelled") throw ea; } return true; } }
+    else if (seen) { if (!absentSince) absentSince = Date.now(); if (Date.now() - absentSince >= DG_END_ABSENT) { try { if (!naOn) dqAfterEnd(); } catch (ea) { if (String(ea) === "cancelled") throw ea; } return true; } }
     else if (Date.now() - t0 > 60000) { log("DAILY DG: dungeon timer never appeared (the entry tap was not detected) - skipping to the next dungeon"); return "skip"; }
   }
   log("DAILY DG: still running after " + Math.round(DG_MAX_RUN / 60000) + " min - queue stopped");
@@ -2775,7 +2794,7 @@ function dgWaitFinish() {
 }
 function dgBtnSync() {      // keeps the main-panel DAILY DG button in step with the queue
   try {
-    var on = !!(dgBusy || dgPending || dgArmed);
+    var on = !!((dgBusy && !naOn) || dgPending || dgArmed);
     ui.run(function () {
       try {
         V("btnDG").setText(on ? "DAILY DG: ON" : "DAILY DG: OFF");
@@ -2994,6 +3013,104 @@ function dgRunQueue() {
     }
   });
 }
+// ===== AUTO DUNGEON RUN - NON PREMIUM USER (both games) =====
+// No Item Entrance / bag items: uses the normal "enter" button of Select Dungeon (left of Item Entrance), then
+// Challenge + AUTO (auto attack button), then taps the quest text in the quest panel whenever the character is not
+// fighting (like tapping the quest by hand), waits for the dungeon to end and goes again. It runs the dungeon that is selected in the list.
+// Shares dgBusy / dgCancel with DAILY DG, so the two can never run at the same time and the stop logic is the same.
+var P_NA_QUEST = [1835, 272, "R"];              // in dungeon: centre of the Dungeon quest panel text (tapping it = walk to the quest, like by hand)
+var P_DG_ENTER = [1370, 1100];                  // Select Dungeon: normal "enter" button (centre; calibrate here if the tap misses)
+var naOn = false;
+function naSync() {
+  ui.run(function () {
+    try {
+      V("btnNA").setText(naOn ? "AUTO DUNGEON RUN: ON" : "AUTO DUNGEON RUN: OFF");
+      V("btnNA").setBackgroundColor(android.graphics.Color.parseColor(naOn ? "#2f7d4a" : "#8a5a1a"));
+    } catch (e) {}
+  });
+}
+function naEnterOnce() {          // town / Select Dungeon -> normal Enter -> Challenge -> AUTO. true = dungeon is running
+  var it = { name: "Auto dungeon" };
+  sleep(500); dgChk();
+  if (!ensureCapture()) { toast("No screen capture - allow screen capture for AutoX.js"); return false; }
+  var img = grab();
+  if (!img) { toast("Can't read the screen"); return false; }
+  var onSel = dgOnSelect(img), chal0 = dgChalShown(img);
+  img.recycle();
+  if (chal0) return dgTapChallenge(it, "already open");
+  if (!onSel) {
+    tapGame(P_DG_CENTER, "auto dg: open Select Dungeon");
+    for (var q = 0; q < 12 && !onSel; q++) {
+      sleep(500); dgChk();
+      var imq = grab();
+      if (!imq) continue;
+      onSel = dgOnSelect(imq);
+      var chq = dgChalShown(imq);
+      imq.recycle();
+      if (chq) return dgTapChallenge(it, "after gate tap");
+    }
+  }
+  if (!onSel && dgInDungeon()) { log("AUTO DG: already inside a dungeon -> AUTO step"); return dgAfterChallenge(it); }
+  if (!onSel) { log("AUTO DG: Select Dungeon did not open"); toast("Select Dungeon didn't open - stand at the dungeon gate"); return false; }
+  sleep(600); dgChk();
+  var im2 = grab(), enterOk = false, ticked = false;
+  if (im2) { enterOk = fracIn(im2, R_DG_ENTER, isBtnBlue, 4) > 0.5; ticked = fracIn(im2, R_DG_REPEAT, isOrange, 3) > 0.04; im2.recycle(); }
+  if (!enterOk) { log("AUTO DG: the Enter button is grey (no entries left, or no dungeon selected)"); toast("No entries left"); dgCloseSelect(); return false; }
+  if (ticked) { tapGame(P_DG_REPEAT, "auto dg: repeat OFF"); sleep(700); dgChk(); }   // repeats come only from the Runs setting
+  tapGame(P_DG_ENTER, "auto dg: enter");
+  var ok = false;
+  for (var i = 0; i < 20 && !ok; i++) {
+    sleep(500); dgChk();
+    var im = grab();
+    if (!im) continue;
+    ok = dgChalShown(im);
+    im.recycle();
+  }
+  if (!ok) {
+    if (dgInDungeon()) { log("AUTO DG: no Enter Dungeon dialog, the dungeon is already running -> AUTO step"); return dgAfterChallenge(it); }
+    log("AUTO DG: Enter Dungeon dialog not seen - check P_DG_ENTER");
+    toast("Enter tap missed - Challenge dialog not seen");
+    dgCloseSelect();
+    return false;
+  }
+  return dgTapChallenge(it, "after Enter");
+}
+function naStart(runs) {
+  if (dgBusy) return;
+  dgBusy = true; dgCancel = false; naOn = true; naSync();
+  threads.start(function () {
+    var done = 0;
+    try {
+      log("AUTO DG: start" + (runs ? " (" + runs + " runs)" : " (until no entries left)"));
+      while (!runs || done < runs) {
+        dgChk();
+        if (!naEnterOnce()) break;
+        var wf = dgWaitFinish();
+        if (!wf || wf === "skip") { log("AUTO DG: dungeon did not finish normally - stopped"); break; }
+        done++;
+        log("AUTO DG: run " + done + (runs ? "/" + runs : "") + " finished");
+        sleep(4000); dgChk();                  // back in town, let the screen settle
+      }
+      log("AUTO DG: done - " + done + " run(s)");
+      toast("Auto DG finished: " + done + " run(s)");
+    } catch (e) {
+      if (e === "cancelled") { log("AUTO DG: stopped after " + done + " run(s)"); toast("Auto DG stopped"); }
+      else log("auto dg error: " + e);
+    } finally {
+      dgBusy = false; dgCancel = false; naOn = false; naSync();
+    }
+  });
+}
+V("btnNA").on("click", function () {
+  if (naOn) { dgCancel = true; toast("Stopping..."); return; }
+  if (dgBusy || dgPending || dgArmed || running || (worker && worker.isAlive()) || respAlive()) { toast("Stop DAILY DG / the other scripts first"); return; }
+  releaseFocus();
+  var n = parseInt(String(V("inaruns").getText()), 10);
+  if (isNaN(n) || n < 0) n = 0;
+  n = Math.min(n, 99);
+  try { store.put("na_runs", n); } catch (e) {}
+  naStart(n);
+});
 function dgStartSoon() {    // short countdown so several dungeons can be switched ON before the first one starts
   if (dgPending) return;
   dgPending = true;
@@ -3404,6 +3521,7 @@ function applyLock(lock) {
     var View = android.view.View;
     V("lockBox").setVisibility(lock ? View.VISIBLE : View.GONE);
     V("hdr").setVisibility(lock ? View.GONE : View.VISIBLE);
+    V("gameTag").setVisibility(lock ? View.GONE : View.VISIBLE);
     V("logBox").setVisibility(lock ? View.GONE : View.VISIBLE);
     V("bodyScroll").setVisibility((lock || !expanded) ? View.GONE : View.VISIBLE);
     V("ilock").setText(""); V("icode").setText("");
@@ -3504,7 +3622,7 @@ V("btnLogout").on("click", function () { releaseFocus(); try { haltAll(); } catc
    threads.start(function () { fbSignOut(who); }); currentUser = ""; applyLock(true); });
 V("btnUpdate").on("click", function () {
   releaseFocus();
-  toast("Checking for update (you have v" + APP_VERSION + ")...");
+  toast("Checking for update (you have v" + APP_LABEL + ")...");
   threads.start(function () { checkUpdate(true); });
 });
 V("btnAddUser").on("click", function () {

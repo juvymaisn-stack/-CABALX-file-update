@@ -19,8 +19,8 @@
 //  Admin can also set/clear users/<uid>.expiresAt (timestamp) in the console at any time.
 //  IP LOCK: only FB.maxPerIp accounts can be created from one public IP (stored hashed in Firestore "ips").
 
-var APP_VERSION = 9;          // bump this on every release you publish (see AUTO UPDATE below) - must stay a whole number
-var APP_LABEL = "9";          // what the panel shows; the updater compares APP_VERSION only
+var APP_VERSION = 10;         // bump this on every release you publish (see AUTO UPDATE below) - must stay a whole number
+var APP_LABEL = "10";          // what the panel shows; the updater compares APP_VERSION only
 var GW = 2093, GH = 1177;
 var store = storages.create("cabal_respawn_redfinger");
 
@@ -537,6 +537,9 @@ var w = floaty.window(sc(
       '<horizontal>' +
         '<text id="viewinfo" text="area: not detected yet" textColor="#6f778a" textSize="10sp" layout_weight="1" gravity="center_vertical"/>' +
       '</horizontal>' +
+      '<button id="btnDetect" text="DETECT SETTINGS + DISPLAY" h="30" bg="#2f5fb3" textColor="#ffffff" textSize="11sp" padding="0" marginTop="2"/>' +
+      '<text id="permInfo" text="permissions: checking..." textColor="#6f778a" textSize="10sp" marginTop="2"/>' +
+      '<button id="btnPerm" text="CHECK PERMISSIONS" h="30" bg="#2f5fb3" textColor="#ffffff" textSize="11sp" padding="0" marginTop="2"/>' +
       '<text text="VERADRIX QUICK SLOT (1-8, left to right)" textColor="#6ea8ff" textSize="10sp" textStyle="bold" marginTop="4"/>' +
       '<input id="ivslot" inputType="number" textColor="#ffffff" textSize="14sp" padding="4"/>' +
       '<text id="btnResp" text="RESPAWN: OFF" textColor="#ffffff" textSize="12sp" textStyle="bold" gravity="center" bg="#3a4152" padding="8" marginTop="4"/>' +
@@ -934,10 +937,20 @@ function shText(cmd) {
 // The emulator's OWN screen setting (LDPlayer: Settings > Advanced > Resolution + DPI).
 // "wm size" / "wm density" report exactly what the emulator is set to ("Override" = the value that is really in use).
 // Read lazily (worker threads only) and cached on DEVICE; falls back to the Android display values.
+// CPU cores the emulator gives to Android (LDPlayer: Settings > Performance > CPU). Read-only: the script cannot change LD's settings.
+function readCores() {
+  var n = 0;
+  try { n = Number(java.lang.Runtime.getRuntime().availableProcessors()) || 0; } catch (e) {}
+  try {
+    var m = /(\d+)\s*-\s*(\d+)/.exec(shText("cat /sys/devices/system/cpu/possible"));
+    if (m) n = Math.max(n, parseInt(m[2], 10) + 1);
+  } catch (e2) {}
+  return n;
+}
 function emuSettings() {
   var d = detectDevice();
   if (d.settings) return d.settings;
-  var st = { w: 0, h: 0, dpi: 0, src: "" };
+  var st = { w: 0, h: 0, dpi: 0, cores: 0, src: "" };
   try {
     var t = shText("wm size"), m = /Override size:\s*(\d+)\s*x\s*(\d+)/i.exec(t) || /Physical size:\s*(\d+)\s*x\s*(\d+)/i.exec(t);
     if (m) { var a1 = parseInt(m[1], 10), b1 = parseInt(m[2], 10); st.w = Math.max(a1, b1); st.h = Math.min(a1, b1); st.src = "wm"; }
@@ -947,6 +960,7 @@ function emuSettings() {
   } catch (e) {}
   if (!st.w) { var rs = realScreen(); st.w = Math.max(rs.w, rs.h); st.h = Math.min(rs.w, rs.h); st.src = "display"; }
   if (!st.dpi) st.dpi = realScreen().dpi;
+  st.cores = readCores();
   d.settings = st;
   return st;
 }
@@ -955,7 +969,7 @@ function logDevice() {
   log("device: " + d.brand + " " + d.model + " | Android " + d.android + " (SDK " + d.sdk + ") | " + d.label);
   log("screen: " + d.w + "x" + d.h + " ratio " + d.ratio + " dpi " + d.dpi);
   if (d.type === "emulator") {
-    try { var es = emuSettings(); log(d.label + " settings: " + es.w + "x" + es.h + " @" + es.dpi + "dpi (" + es.src + ")"); } catch (e) {}
+    try { var es = emuSettings(); log(d.label + " settings: " + es.w + "x" + es.h + " @" + es.dpi + "dpi, " + es.cores + " CPU cores (" + es.src + ")"); } catch (e) {}
   }
   if (d.ratio && Math.abs(d.ratio - GW / GH) > 0.15)
     log("note: ratio differs from 16:9 - taps are scaled by height and centred");
@@ -1092,7 +1106,7 @@ function applyView(r) {
     var dev = detectDevice();
     if (dev.type === "emulator") {
       var es = emuSettings();
-      var head = dev.label + "  settings " + es.w + "x" + es.h + " @" + es.dpi + "dpi";
+      var head = dev.label + "  settings " + es.w + "x" + es.h + " @" + es.dpi + "dpi  |  " + es.cores + " CPU cores";
       if (r.cw && es.w && (Math.abs(r.cw - es.w) > 2 || Math.abs(r.ch - es.h) > 2)) {
         head += "  | capture " + r.cw + "x" + r.ch + " (differs from emulator setting)";
         log(dev.label + ": capture " + r.cw + "x" + r.ch + " differs from the emulator setting " + es.w + "x" + es.h + " - taps use the capture size");
@@ -1100,6 +1114,7 @@ function applyView(r) {
       txt = head + "\n" + txt;
     }
   } catch (e) {}
+  try { showPerms(); } catch (e) {}
   if (txt !== viewTxt) { log("game " + txt.replace(/\n/g, " | ")); showView(txt); }
 }
 
@@ -2234,6 +2249,64 @@ V("btnSetSpot").on("click", function () {     // open GPS, find the character ma
     try { setSpotRun(); } catch (e) { log("set spot err: " + e); }
     setStatus("idle");
     log("spot done");
+  });
+});
+// ===== PERMISSION DETECT =====
+// overlay (floating panel), accessibility (taps), screen capture (picture), log storage (/sdcard/CabalLogs), battery unrestricted (stops Android killing the script)
+function checkPerms() {
+  var p = { overlay: false, access: false, capture: false, storage: false, battery: false };
+  try { p.overlay = !!floaty.checkPermission(); } catch (e) {}
+  try { p.access = (auto.service != null); } catch (e) {}
+  p.capture = !!capReady;
+  try { p.storage = !!DBG.dir; } catch (e) {}
+  try { p.battery = !!context.getSystemService(android.content.Context.POWER_SERVICE).isIgnoringBatteryOptimizations(context.getPackageName()); } catch (e) {}
+  return p;
+}
+function permText(p) {
+  function f(ok) { return ok ? "OK" : "OFF"; }
+  return "permissions: overlay " + f(p.overlay) + " | accessibility " + f(p.access) + " | screen capture " + f(p.capture) + " | log storage " + f(p.storage) + " | battery unrestricted " + f(p.battery);
+}
+function showPerms() {
+  var p = checkPerms(), txt = permText(p);
+  var allOk = p.overlay && p.access && p.capture && p.storage && p.battery;
+  ui.run(function () {
+    try { V("permInfo").setText(txt); V("permInfo").setTextColor(android.graphics.Color.parseColor(allOk ? "#5fd38a" : "#ffb74d")); } catch (e) {}
+  });
+  return p;
+}
+V("btnPerm").on("click", function () {
+  releaseFocus();
+  threads.start(function () {
+    try {
+      var p = showPerms();
+      log(permText(p));
+      if (!p.access) { toast("Turn ON AutoX.js in Accessibility, then tap CHECK again"); app.startActivity({ action: "android.settings.ACCESSIBILITY_SETTINGS" }); return; }
+      if (!p.capture) { toast("Allow screen capture when asked"); ensureCapture(); showPerms(); return; }
+      if (!p.battery) { toast("Set AutoX.js to Unrestricted / Don't optimize"); app.startActivity({ action: "android.settings.IGNORE_BATTERY_OPTIMIZATION_SETTINGS" }); return; }
+      if (!p.storage) { toast("Log storage not available - allow storage for AutoX.js"); return; }
+      toast("All permissions OK");
+    } catch (e) { log("permission check err: " + e); toast("Permission check failed - see log"); }
+  });
+});
+// DETECT SETTINGS + DISPLAY: re-read the device / emulator settings (LD resolution + DPI) and re-measure the game area now
+var detBusy = false;
+V("btnDetect").on("click", function () {
+  if (detBusy) return;
+  releaseFocus();
+  C = readInputs();
+  if (!C.autoFit) { toast("Turn ON \"Auto-detect game display area\" first"); return; }
+  detBusy = true;
+  toast("Detecting...");
+  threads.start(function () {
+    try {
+      DEVICE = null; viewTxt = "";
+      if (!ensureCapture()) { toast("Allow screen capture for AutoX.js first"); return; }
+      logDevice();
+      refitView();
+      log(permText(showPerms()));
+      toast(VIEW_OK ? "Display detected" : "Game area not found - using full screen");
+    } catch (e) { log("detect button err: " + e); toast("Detect failed - see log"); }
+    finally { detBusy = false; }
   });
 });
 V("btnSave").on("click", function () {
@@ -4283,6 +4356,7 @@ V("lockTitle").setOnTouchListener(function (view, event) {
 
 fillInputs(C);
 try { DBG.start(function (m) { log(m); toast("Last run ended unexpectedly - see log"); }); } catch (e) { }
+threads.start(function () { try { sleep(800); log(permText(showPerms())); } catch (e) {} });
 applyGame();
 gameSync();
 setStatus("idle");

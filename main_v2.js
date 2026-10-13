@@ -19,8 +19,8 @@
 //  Admin can also set/clear users/<uid>.expiresAt (timestamp) in the console at any time.
 //  IP LOCK: only FB.maxPerIp accounts can be created from one public IP (stored hashed in Firestore "ips").
 
-var APP_VERSION = 18;         // bump this on every release you publish (see AUTO UPDATE below) - must stay a whole number
-var APP_LABEL = "10.8";         // what the panel shows; the updater compares APP_VERSION only
+var APP_VERSION = 22;         // bump this on every release you publish (see AUTO UPDATE below) - must stay a whole number
+var APP_LABEL = "11.2";         // what the panel shows; the updater compares APP_VERSION only
 var GW = 2093, GH = 1177;
 var store = storages.create("cabal_respawn_redfinger");
 
@@ -262,7 +262,8 @@ var FB = {
   maxPerIpEmu: 10,          // same limit when the device is an emulator / Redfinger cloud phone
   maxPerIp: 1,               // accounts that may be created from one public IP (raise if players share a network)
   domain: "cabal.local",     // username "james" signs in as james@cabal.local (type a full email to override)
-  beat:   30000              // heartbeat every 30 s
+  beat:   30000,             // heartbeat every 30 s
+  pullEvery: 3               // read the account doc (expiry / device / owner commands) every 3rd beat = ~90 s
 };
 function fbOn() { return FB.apiKey.indexOf("PASTE") < 0 && FB.projectId.indexOf("YOUR") < 0; }
 var FS_DOC = "projects/" + FB.projectId + "/databases/(default)/documents";
@@ -336,6 +337,8 @@ function dumpPanel() {
   var logV = null, bodyV = null;
   try { logV = V("logv"); } catch (e) {}
   try { bodyV = V("bodyScroll"); } catch (e) {}
+  var ctl = [];
+  CTRL_IDS.forEach(function (id) { try { var x = V(id); if (x) ctl.push({ id: id, v: x }); } catch (e) {} });
   function skip(v) { for (var i = 0; i < skipV.length; i++) if (skipV[i].equals(v)) return true; return false; }
   function bgOf(v) { try { var bd = v.getBackground(); if (bd && String(bd.getClass().getSimpleName()) === "ColorDrawable") return Number(bd.getColor()); } catch (e) {} return null; }
   function isPass(v) { try { var it = Number(v.getInputType()), c = it & 15, vr = it & 4080; return (c === 1 && (vr === 128 || vr === 144 || vr === 224)) || (c === 2 && vr === 16); } catch (e) { return true; } }
@@ -365,6 +368,7 @@ function dumpPanel() {
       if (k === "t" && !tx) return null;
       n++;
       o.k = k; o.x = tx.slice(0, 160);
+      for (var ci = 0; ci < ctl.length; ci++) if (ctl[ci].v.equals(v)) { o.id = ctl[ci].id; break; }
       o.tc = Number(v.getCurrentTextColor());
       o.sz = Math.round(Number(v.getTextSize()) / sden * 10) / 10;
       if (k === "s") o.ch = !!v.isChecked();
@@ -464,6 +468,28 @@ function checkUpdate(manual) {                    // manual = the UPDATE SCRIPT 
   } catch (e) { say("update check error: " + e); }
   finally { updBusy = false; }
 }
+var liveUntil = 0, livePushAt = 0;
+var CTRL_IDS = ["fb", "btnVera", "btnResp", "btnDG", "btnNA", "btnNARec", "btnGame", "sFit", "sAuto", "sConsole", "sOpen", "sEnter", "sPopup"];   // the only widgets the owner can press remotely
+function ownerCmd(a) {                  // run a command the owner left on this account; true = the user was logged out (end the loop)
+  if (!a || a.admin) return false;
+  var c = a.cmd || "";
+  var tap = /^tap:([A-Za-z]{2,12})$/.exec(c);
+  if (c !== "stop" && c !== "kick" && !tap) return false;
+  try { fbCommit([fsDoc("users/" + fbAuth.uid, { cmd: "" })]); } catch (e) {}      // clear it first so it runs once
+  log("owner command: " + c);
+  if (c === "kick") { kickOut("Logged out by the owner"); return true; }
+  if (c === "stop") { try { haltAll(); } catch (e) {} toast("Stopped by the owner"); return false; }
+  var id = tap[1];
+  if (CTRL_IDS.indexOf(id) < 0) return false;
+  toast("Owner pressed: " + id);
+  ui.run(function () {
+    try {
+      var v = V(id);
+      if (/Switch/i.test(String(v.getClass().getSimpleName()))) v.setChecked(!v.isChecked()); else v.performClick();
+    } catch (e) { log("owner tap err: " + e); }
+  });
+  return false;
+}
 function fbStart() {
   if (fbThread) { try { fbThread.interrupt(); } catch (e) {} }
   fbThread = threads.start(function () {
@@ -472,18 +498,13 @@ function fbStart() {
       try {
         beatN++;
         if (beatN === 1 || beatN % 10 === 0) checkUpdate();     // auto update: login, then every ~5 min
-        if (beatN % 5 === 0) {                       // pick up admin changes (expiry / device) every ~2.5 min
+        if (beatN % FB.pullEvery === 0) {            // pick up admin changes (expiry / device / commands) every ~90 s
           var a = fbPullAccount();
           if (a) {
             acctExp = a.exp; acctAdmin = a.admin;
             if (!a.admin && a.bound && a.bound !== myDeviceId()) { kickOut("Account locked to another device"); return; }
-            if (!a.admin && (a.cmd === "stop" || a.cmd === "kick")) {      // remote command from the owner (checked every ~2.5 min)
-              try { fbCommit([fsDoc("users/" + fbAuth.uid, { cmd: "" })]); } catch (e) {}   // clear it first so it runs once
-              log("owner command: " + a.cmd);
-              if (a.cmd === "kick") { kickOut("Logged out by the owner"); return; }
-              try { haltAll(); } catch (e) {}
-              toast("Stopped by the owner");
-            }
+            if (a.watch && nowMs() - a.watch < 90000) liveUntil = Date.now() + 90000;   // the owner has this panel open: poll fast
+            if (ownerCmd(a)) return;
           }
         }
         if (!acctAdmin && acctExp && nowMs() >= acctExp) { kickOut("Account expired - enter a new key to log in"); return; }
@@ -496,7 +517,21 @@ function fbStart() {
           if (!r || r.statusCode >= 300) fbQueue = batch.concat(fbQueue).slice(-100);   // retry next beat
         }
       } catch (e) {}
-      sleep(FB.beat);
+      for (var w8 = 0; w8 < FB.beat && fbAuth; w8 += 1000) {
+        sleep(1000);
+        if (Date.now() < liveUntil && fbAuth && w8 % 3000 === 2000) {      // owner is watching: check every 3 s so remote presses land quickly
+          try {
+            var la = fbPullAccount();
+            if (la) {
+              if (la.watch && nowMs() - la.watch < 90000) liveUntil = Date.now() + 90000;
+              var tapped = !!(la.cmd && /^tap:/.test(la.cmd));
+              if (ownerCmd(la)) return;
+              if (tapped) sleep(1200);
+              if (tapped || Date.now() - livePushAt > 6000) { fbPush(fbState); livePushAt = Date.now(); }
+            }
+          } catch (e) {}
+        }
+      }
     }
   });
 }
@@ -2528,7 +2563,8 @@ function fbPullAccount() {              // {bound: deviceId, exp: ms} or null wh
     if (res.statusCode !== 200) return null;
     var f = fbBody(res).fields || {};
     var ts = (f.expiresAt && f.expiresAt.timestampValue) ? Date.parse(String(f.expiresAt.timestampValue).replace(/\.\d+Z$/, "Z")) : 0;
-    return { bound: (f.deviceId && f.deviceId.stringValue) || "", exp: ts || 0, admin: !!(f.admin && f.admin.booleanValue === true), cmd: (f.cmd && f.cmd.stringValue) || "" };
+    return { bound: (f.deviceId && f.deviceId.stringValue) || "", exp: ts || 0, admin: !!(f.admin && f.admin.booleanValue === true), cmd: (f.cmd && f.cmd.stringValue) || "",
+             watch: (f.watch && f.watch.timestampValue) ? (Date.parse(String(f.watch.timestampValue).replace(/\.\d+Z$/, "Z")) || 0) : 0 };
   } catch (e) { return null; }
 }
 // after sign-in: returns "OK" (this device is allowed / now bound), "OTHER" (locked to another device) or "NETWORK"
@@ -4408,15 +4444,16 @@ function monExtend(days) {
   var base = Math.max(nowMs(), (monInfo && monInfo.exp) || 0);
   return fsDoc("users/" + monUid, { expiresAt: { ts: new Date(base + days * 86400000).toISOString() } });
 }
-function monBuild(nd, ctx, den) {                // rebuild one snapshot node as a real (non-interactive) view
+function monBuild(nd, ctx, den, k) {
+  k = k || 1;                // rebuild one snapshot node as a real (non-interactive) view
   var LL = android.widget.LinearLayout, Color = android.graphics.Color;
-  function dp(x) { return Math.round(x * den); }
+  function dp(x) { return Math.round(x * den * k); }
   if (nd.c) {
     var g = new LL(ctx); g.setOrientation(nd.o === 0 ? 0 : 1);
     if (nd.g !== undefined) { g.setBackgroundColor(nd.g); g.setPadding(dp(4), dp(4), dp(4), dp(4)); }
     var hz = nd.o === 0;
     nd.c.forEach(function (ch) {
-      var cv = monBuild(ch, ctx, den);
+      var cv = monBuild(ch, ctx, den, k);
       var wpx = ch.pw ? dp(ch.pw) : (hz ? (ch.w ? 0 : -2) : -1);
       var lp = new LL.LayoutParams(wpx, -2, ch.w || 0);
       if (!hz) lp.setMargins(0, dp(2), 0, 0); else lp.setMargins(dp(1), 0, dp(1), 0);
@@ -4429,15 +4466,17 @@ function monBuild(nd, ctx, den) {                // rebuild one snapshot node as
   if (nd.k === "s") {
     tv = new android.widget.Switch(ctx);
     tv.setChecked(!!nd.ch);
-    tv.setOnTouchListener(function () { return true; });          // looks like the panel, but the owner can't flip the user's switches
+    if (nd.id) tv.setOnTouchListener(function (view, ev) { if (ev.getAction() === 1) pvTap(nd.id, nd.x); return true; });   // switch the user's switch remotely
+    else tv.setOnTouchListener(function () { return true; });
   } else tv = new android.widget.TextView(ctx);
-  tv.setText(String(nd.x || "")); tv.setTextColor(nd.tc); tv.setTextSize(nd.sz || 11);
+  tv.setText(String(nd.x || "")); tv.setTextColor(nd.tc); tv.setTextSize((nd.sz || 11) * k);
   if (nd.g !== undefined) tv.setBackgroundColor(nd.g);
   if (nd.k === "b") { tv.setGravity(android.view.Gravity.CENTER); tv.setPadding(dp(4), dp(9), dp(4), dp(9)); }
   else if (nd.k === "i") { tv.setPaintFlags(tv.getPaintFlags() | 8); tv.setPadding(dp(4), dp(5), dp(4), dp(5)); }
   else if (nd.k === "s") tv.setPadding(dp(2), dp(4), dp(2), dp(4));
   else { tv.setPadding(dp(2), dp(1), dp(2), dp(1)); if (nd.gc) tv.setGravity(android.view.Gravity.CENTER_HORIZONTAL); }
   if (nd.m) tv.setTypeface(android.graphics.Typeface.MONOSPACE);
+  if (nd.id && nd.k !== "s") tv.setOnClickListener(function () { pvTap(nd.id, nd.x); });
   return tv;
 }
 function monRender() {
@@ -4459,7 +4498,7 @@ function monRender() {
     monUsers.forEach(function (u) {
       var up = monOnline(u);
       add((up ? "\u25CF " : "\u25CB ") + u.name + (u.admin ? " [owner]" : "") + "\n    " + u.state + "  \u2022  " + agoText(u.seen),
-          up ? "#7CFC9A" : "#8b93a7", 12, function () { monUid = u.uid; monName = u.name; monInfo = null; monEvents = []; monMsg = ""; monw.monItems.removeAllViews(); monw.monTitle.setText("LOG: " + u.name); threads.start(monFetch); });
+          up ? "#7CFC9A" : "#8b93a7", 12, function () { openPv(u.uid, u.name); });
     });
     if (!monUsers.length && !monMsg) add("loading...", "#6f778a", 12);
   } else {
@@ -4484,6 +4523,7 @@ function monRender() {
     row([ btn("STOP", "#7a5a1a", function () { monAct("STOP", false, function () { return fsDoc("users/" + monUid, { cmd: "stop" }); }, "Stop sent (applies within ~2.5 min)"); }),
           btn("KICK", "#7a2a2a", function () { monAct("KICK", true, function () { return fsDoc("users/" + monUid, { cmd: "kick" }); }, "Kick sent (applies within ~2.5 min)"); }),
           btn("UNLOCK DEVICE", "#3a4a6b", function () { monAct("UNLOCK DEVICE", true, function () { return { update: { name: FS_DOC + "/users/" + monUid, fields: {} }, updateMask: { fieldPaths: ["deviceId"] } }; }, "Device lock cleared"); }) ]);
+    row([ btn("OPEN PANEL VIEW (like the user's screen)", "#1f6f8b", function () { openPv(monUid, monName); }) ]);
     row([ btn("+7 DAYS", "#2f7d4a", function () { monAct("+7 DAYS", false, function () { return monExtend(7); }, "+7 days added"); }),
           btn("+30 DAYS", "#2f7d4a", function () { monAct("+30 DAYS", false, function () { return monExtend(30); }, "+30 days added"); }),
           btn("EXPIRE NOW", "#7a2a2a", function () { monAct("EXPIRE NOW", true, function () { return fsDoc("users/" + monUid, { expiresAt: { ts: new Date(nowMs() - 1000).toISOString() } }); }, "Account expired"); }) ]);
@@ -4491,12 +4531,7 @@ function monRender() {
       var pn = monInfo.panel, st = pn.set || {}, oo = function (b) { return b ? "ON" : "off"; };
       add("USER PANEL  v" + pn.v + "  (snapshot " + agoText(pn.at) + ", read-only)", "#4fc3e8", 11);
       if (pn.ui) {
-        try {
-          var pv = monBuild(pn.ui, context, d);
-          var plp = new android.widget.LinearLayout.LayoutParams(-1, -2); plp.setMargins(Math.round(4 * d), Math.round(2 * d), Math.round(4 * d), Math.round(4 * d));
-          pv.setLayoutParams(plp);
-          box.addView(pv);
-        } catch (e) { add("can't draw the panel: " + e, "#ff8a80", 10); }
+        add("Tap OPEN PANEL VIEW to see this panel like the user's screen.", "#8b93a7", 10);
       } else {
       add("Status:  " + (pn.run ? "RUNNING" : "IDLE") + "   respawn " + oo(pn.resp) + "   dungeon " + oo(pn.dg) + "   screen capture " + oo(pn.cap) + "\nGame: " + pn.game + "\nPhone: " + pn.dev, "#e8ecf5", 10, null, true);
       add("Settings:\n x/y " + st.x + "," + st.y + "   dx/dy " + st.dx + "," + st.dy + "\n check " + st.check + "ms   wait " + st.wait + "ms   load wait " + st.openWait + "ms\n veradrix slot " + st.vSlot + "   pkg '" + (st.pkg || "auto") + "'  pkgRA '" + (st.pkgRA || "auto") + "'\n auto fit " + oo(st.autoFit) + "   auto check " + oo(st.autoCheck) + "   console " + oo(st.showConsole) + "\n auto open " + oo(st.autoOpen) + "   auto enter " + oo(st.autoEnter) + "   auto popups " + oo(st.autoPopup), "#e8ecf5", 10, null, true);
@@ -4513,8 +4548,8 @@ function monRender() {
   if (monMsg) add(monMsg, "#ff8a80", 11);
   try { monw.monSub.setText("auto-refresh 10s \u2022 updated " + new Date().toLocaleTimeString()); } catch (e) {}
 }
-function openMon() {
-  monUid = ""; monName = ""; monMsg = ""; monUsers = []; monEvents = [];
+function openMon(uid, name) {
+  monUid = uid || ""; monName = name || ""; monInfo = null; monMsg = ""; monUsers = []; monEvents = [];
   monw = floaty.window(sc(
     '<vertical w="320" bg="#F2111722" padding="4">' +
       '<horizontal gravity="center_vertical">' +
@@ -4547,9 +4582,121 @@ function openMon() {
     }
   });
 }
+// ===== OWNER: PANEL VIEW (the user's panel as its own floating window, like on their phone) =====
+var pvw = null, pvUid = "", pvName = "", pvPanel = null, pvMsg = "", pvShownAt = 0, pvTry = 0;
+function pvTap(id, label) {              // press one of the user's buttons / switches (applies within a few seconds while the panel view is open)
+  if (!pvUid) return;
+  var uid = pvUid;
+  threads.start(function () {
+    var r = null;
+    try { r = fbCommit([fsDoc("users/" + uid, { cmd: "tap:" + id })]); } catch (e) {}
+    if (r && r.statusCode >= 200 && r.statusCode < 300) toast("Sent: " + String(label).slice(0, 26));
+    else toast(r ? "Failed (" + r.statusCode + ") - publish the new rules" : "No connection");
+  });
+}
+function closePv() { if (pvw) { try { pvw.close(); } catch (e) {} pvw = null; } }
+function pvFetch() {
+  var win = pvw;
+  if (!win) return;
+  var r = fsGetJson("users/" + pvUid), msg = "";
+  if (r.err) msg = r.err;
+  else { try { pvPanel = JSON.parse(fsStr(r.j.fields || {}, "panel")); } catch (e) { pvPanel = null; } }
+  pvMsg = msg;
+  if (pvw === win) ui.run(function () { try { pvRender(); } catch (e) {} });
+}
+function pvRender() {
+  if (!pvw) return;
+  var box = pvw.pvItems, d = context.getResources().getDisplayMetrics().density;
+  pvw.pvTitle.setText("PANEL: " + pvName);
+  var has = !!(pvPanel && pvPanel.ui);
+  if (has && pvPanel.at === pvShownAt && !pvMsg && box.getChildCount() > 0) {          // same snapshot: don't redraw (keeps your scroll position)
+    pvw.pvSub.setText("snapshot " + agoText(pvPanel.at) + " \u2022 tap buttons / switches to control \u2022 v" + pvPanel.v);
+    return;
+  }
+  var sv = pvw.pvScroll, sy = 0;
+  try { sy = Number(sv.getScrollY()); } catch (e) {}
+  box.removeAllViews();
+  if (has) {
+    try {
+      var bw = Number(box.getWidth());
+      if (!bw && pvTry < 6) {                                                 // window not laid out yet: wait one frame and draw again with the real width
+        pvTry++; pvShownAt = 0;
+        var wn = pvw;
+        box.post(function () { if (pvw === wn) { try { pvRender(); } catch (e) {} } });
+        pvw.pvSub.setText("loading...");
+        return;
+      }
+      if (!bw) bw = context.getResources().getDisplayMetrics().widthPixels;
+      pvShownAt = pvPanel.at;
+      var availDp = bw / d - 16, base = pvPanel.ui.pw || 290;
+      var kk = Math.max(1, Math.min(1.7, availDp / base));                  // zoom the panel to fit the window, never wider than it
+      var v = monBuild(pvPanel.ui, context, d, kk);
+      var plp = new android.widget.LinearLayout.LayoutParams(-1, -2); plp.setMargins(Math.round(8 * d), Math.round(4 * d), Math.round(8 * d), Math.round(8 * d));
+      v.setLayoutParams(plp);
+      box.addView(v);
+      sv.post(function () { try { sv.scrollTo(0, sy); } catch (e) {} });          // keep the scroll position when the panel redraws
+    } catch (e) { pvMsg = "can't draw the panel: " + e; }
+    pvw.pvSub.setText("snapshot " + agoText(pvPanel.at) + " \u2022 tap buttons / switches to control \u2022 v" + pvPanel.v);
+  } else {
+    var tv = new android.widget.TextView(context);
+    tv.setText(pvMsg ? "" : "No panel snapshot yet.\nThe user needs script v" + APP_LABEL + " or newer (it updates itself when idle) and must be logged in.");
+    tv.setTextColor(android.graphics.Color.parseColor("#8b93a7")); tv.setTextSize(12); tv.setPadding(Math.round(10 * d), Math.round(10 * d), Math.round(10 * d), Math.round(10 * d));
+    box.addView(tv);
+    pvw.pvSub.setText("");
+  }
+  if (pvMsg) {
+    var er = new android.widget.TextView(context);
+    er.setText(pvMsg); er.setTextColor(android.graphics.Color.parseColor("#ff8a80")); er.setTextSize(11); er.setPadding(Math.round(10 * d), Math.round(6 * d), Math.round(10 * d), Math.round(6 * d));
+    box.addView(er);
+  }
+}
+function openPv(uid, name) {
+  closeMon(); closePv();
+  pvUid = uid; pvName = name; pvPanel = null; pvMsg = ""; pvShownAt = 0; pvTry = 0;
+  var dm0 = context.getResources().getDisplayMetrics();
+  pvw = floaty.window(
+    '<vertical w="match_parent" h="match_parent" bg="#F00b0e13">' +
+      '<horizontal gravity="center_vertical" bg="#FF111722">' +
+        '<text id="pvClose" text="\u2715" textColor="#ffffff" textSize="20sp" textStyle="bold" padding="12"/>' +
+        '<text id="pvTitle" text="PANEL (drag here)" textColor="#4fc3e8" textSize="14sp" textStyle="bold" layout_weight="1" padding="8"/>' +
+        '<text id="pvRef" text="\u27F3" textColor="#ffffff" textSize="20sp" textStyle="bold" padding="12"/>' +
+        '<text id="pvCtl" text="CTRL" textColor="#e0b84a" textSize="13sp" textStyle="bold" padding="12"/>' +
+      '</horizontal>' +
+      '<ScrollView id="pvScroll" layout_weight="1"><vertical id="pvItems"/></ScrollView>' +
+      '<text id="pvSub" text="" textColor="#cfd6e4" textSize="10sp" padding="4" bg="#FF111722"/>' +
+    '</vertical>'
+  );
+  try { pvw.setSize(dm0.widthPixels, dm0.heightPixels - Math.round(60 * dm0.density)); } catch (e) {}     // exact pixel size: always the whole screen
+  var win = pvw;
+  win.setPosition(0, 0);
+  try { win.disableFocus(); } catch (e) {}
+  var px0, py0, pwx, pwy;
+  win.pvTitle.setOnTouchListener(function (view, event) {
+    switch (event.getAction()) {
+      case 0: px0 = event.getRawX(); py0 = event.getRawY(); pwx = win.getX(); pwy = win.getY(); return true;
+      case 2: win.setPosition(pwx + (event.getRawX() - px0), pwy + (event.getRawY() - py0)); return true;
+    }
+    return true;
+  });
+  win.pvClose.on("click", closePv);
+  win.pvCtl.on("click", function () { var u = pvUid, n = pvName; closePv(); openMon(u, n); });      // controls + cloud events for this user
+  win.pvRef.on("click", function () { toast("Refreshing..."); threads.start(function () { try { pvFetch(); } catch (e) {} }); });
+  pvRender();
+  threads.start(function () {
+    var tk = 0;
+    while (pvw === win && fbAuth) {
+      try {
+        if (tk % 4 === 0) { try { fbCommit([fsDoc("users/" + pvUid, {}, ["watch"])]); } catch (e) {} }   // "owner is watching": the user's app then polls every 3 s
+        pvFetch();
+      } catch (e) { log("panel view err: " + e); }
+      tk++;
+      for (var i = 0; i < 5 && pvw === win; i++) sleep(1000);
+    }
+  });
+}
 V("btnMonitor").on("click", function () {
   if (!acctAdmin) { toast("Owner only"); return; }
-  if (monw) { closeMon(); return; }                         // button toggles the popup
+  if (monw || pvw) { closeMon(); closePv(); return; }       // button toggles the popup
   releaseFocus();
   openMon();
 });
@@ -4663,7 +4810,7 @@ function applyLock(lock) {
       V("iuser").setText("");
       V("ilock2").setText(""); V("icode").setText("");
       regMode = false;
-      acctAdmin = false; V("btnRelease").setVisibility(View.GONE); V("btnMonitor").setVisibility(View.GONE); relArm = 0; V("ghtok").setText(""); V("ghOut").setText(""); V("keyPanel").setVisibility(View.GONE); V("keyOut").setText(""); closeDg(); closeDaily(); closeFp(); closeMon();
+      acctAdmin = false; V("btnRelease").setVisibility(View.GONE); V("btnMonitor").setVisibility(View.GONE); relArm = 0; V("ghtok").setText(""); V("ghOut").setText(""); V("keyPanel").setVisibility(View.GONE); V("keyOut").setText(""); closeDg(); closeDaily(); closeFp(); closeMon(); closePv();
       renderLock();
       fillSaved();
       releaseFocus();

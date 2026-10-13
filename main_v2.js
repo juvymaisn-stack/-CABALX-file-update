@@ -19,13 +19,13 @@
 //  Admin can also set/clear users/<uid>.expiresAt (timestamp) in the console at any time.
 //  IP LOCK: only FB.maxPerIp accounts can be created from one public IP (stored hashed in Firestore "ips").
 
-var APP_VERSION = 22;         // bump this on every release you publish (see AUTO UPDATE below) - must stay a whole number
-var APP_LABEL = "11.2";         // what the panel shows; the updater compares APP_VERSION only
+var APP_VERSION = 24;         // bump this on every release you publish (see AUTO UPDATE below) - must stay a whole number
+var APP_LABEL = "11.4";         // what the panel shows; the updater compares APP_VERSION only
 var GW = 2093, GH = 1177;
 var store = storages.create("cabal_respawn_redfinger");
 
 // ===== SETTINGS (saved between runs) =====
-var DEF = { x: 194, y: 200, check: 700, wait: 6000, dx: 0, dy: 0, autoCheck: true, showConsole: false, autoOpen: true, autoEnter: true, autoPopup: true, autoLogin: false, autoFit: true, pin: "0708", pkg: "", pkgRA: "", game: "mobile", openWait: 25000, vSlot: 5 };
+var DEF = { x: 194, y: 200, check: 700, wait: 6000, dx: 0, dy: 0, autoCheck: true, showConsole: false, autoOpen: true, autoEnter: true, autoPopup: true, autoLogin: false, autoFit: true, autoHide: true, hideSec: 10, pin: "0708", pkg: "", pkgRA: "", game: "mobile", openWait: 25000, vSlot: 5 };
 function loadCfg() {
   var c = {};
   for (var k in DEF) {
@@ -334,7 +334,8 @@ var fbWarned = false, fbSeq = 0;
 function dumpPanel() {
   var dm = context.getResources().getDisplayMetrics(), den = dm.density, sden = dm.scaledDensity, n = 0, skipV = [];
   ["ipin", "ghtok", "ilock", "ilock2", "inewpass", "icode", "keyPanel", "lockBox"].forEach(function (id) { try { var x = V(id); if (x) skipV.push(x); } catch (e) {} });
-  var logV = null, bodyV = null;
+  var logV = null, bodyV = null, rootV = null;
+  try { rootV = V("rootP"); } catch (e) {}
   try { logV = V("logv"); } catch (e) {}
   try { bodyV = V("bodyScroll"); } catch (e) {}
   var ctl = [];
@@ -346,7 +347,7 @@ function dumpPanel() {
     if (n > 170 || depth > 14) return null;
     try {
       if (skip(v)) return null;
-      if (Number(v.getVisibility()) !== 0 && !(bodyV && v.equals(bodyV))) return null;       // the settings body is shown even when the user collapsed it
+      if (Number(v.getVisibility()) !== 0 && !(bodyV && v.equals(bodyV)) && !(rootV && v.equals(rootV))) return null;       // the settings body is shown even when the user collapsed it
       var o = {}, bg = bgOf(v), lp = v.getLayoutParams();
       if (bg !== null) o.g = bg;
       if (lp) { var wd = Number(lp.width); if (wd > 0) o.pw = Math.round(wd / den); var wt = lp.weight; if (wt !== undefined && Number(wt) > 0) o.w = Number(wt); }
@@ -671,6 +672,8 @@ var w = floaty.window(sc(
       '</vertical>' +
       '<Switch id="sAuto" text="Tap AUTO only if off" textColor="#e8ecf5" textSize="12sp" padding="2"/>' +
       '<Switch id="sConsole" text="Show console" textColor="#e8ecf5" textSize="12sp" padding="2"/>' +
+      '<Switch id="sHide" text="Auto hide panel (tap screen to wake)" textColor="#e8ecf5" textSize="12sp" padding="2"/>' +
+      '<horizontal gravity="center_vertical"><text text="Hide after (seconds)" textColor="#8b93a7" textSize="10sp" layout_weight="1"/><input id="ihide" inputType="number" textColor="#ffffff" textSize="14sp" padding="4" w="70"/></horizontal>' +
       '<text id="btnGame" text="GAME: CABAL MOBILE  (tap to switch)" textColor="#ffffff" textSize="12sp" textStyle="bold" gravity="center" bg="#2f5fb3" padding="8" marginTop="4"/>' +
       '<Switch id="sOpen" text="Auto open / reopen game" textColor="#e8ecf5" textSize="12sp" padding="2"/>' +
       '<Switch id="sEnter" text="Auto enter game (tap + Game start)" textColor="#e8ecf5" textSize="12sp" padding="2"/>' +
@@ -760,6 +763,8 @@ function fillInputs(c) {
     V("sAuto").setChecked(!!c.autoCheck);
     V("sConsole").setChecked(!!c.showConsole);
     V("sOpen").setChecked(!!c.autoOpen);
+    V("sHide").setChecked(c.autoHide !== false);
+    V("ihide").setText(String(c.hideSec || DEF.hideSec));
     V("sEnter").setChecked(!!c.autoEnter);
     V("sPopup").setChecked(!!c.autoPopup);
     V("sAutoLogin").setChecked(!!c.autoLogin);
@@ -789,6 +794,8 @@ function readInputs() {
     autoCheck: V("sAuto").isChecked(),
     showConsole: V("sConsole").isChecked(),
     autoOpen: V("sOpen").isChecked(),
+    autoHide: V("sHide").isChecked(),
+    hideSec: num(V("ihide"), DEF.hideSec, 3, 300),
     autoEnter: V("sEnter").isChecked(),
     autoPopup: V("sPopup").isChecked(),
     autoLogin: !!(acctAdmin && V("sAutoLogin").isChecked()),
@@ -1341,10 +1348,10 @@ var METHODS = [];
 var method = 0;
 function buildMethods() {
   METHODS = [];
-  if (hasRoot) METHODS.push(function (x, y) { shell("input tap " + x + " " + y, true); });
-  METHODS.push(function (x, y) { press(x, y, 150); });
-  METHODS.push(function (x, y) { click(x, y); });
-  METHODS.push(function (x, y) { swipe(x, y, x + 1, y + 1, 150); });
+  if (hasRoot) METHODS.push(function (x, y) { botTouch(); shell("input tap " + x + " " + y, true); });
+  METHODS.push(function (x, y) { botTouch(); press(x, y, 150); });
+  METHODS.push(function (x, y) { botTouch(); click(x, y); });
+  METHODS.push(function (x, y) { botTouch(); swipe(x, y, x + 1, y + 1, 150); });
   method = 0;
 }
 function tapGame(p, label) {
@@ -2475,6 +2482,7 @@ function setLogMin(m) {
 V("lmin").on("click", function () { setLogMin(!logMin); });
 function quitAll() {
   var who = currentUser;
+  try { stopHideWatcher(); } catch (e) {}
   try { DBG.reason = DBG.reason || "QUIT pressed / quitAll"; DBG.end(); } catch (e) {}
   try { closeFp(); } catch (e) {}
   try { closeDg(); } catch (e) {}
@@ -3346,6 +3354,7 @@ function dgScrollTo(mode) {    // list remembers its scroll: drag it to the top 
   try {
     var a = map([P_DG_ROW_X, 330]), z = map([P_DG_ROW_X, 760]);
     for (var k = 0; k < 2; k++) {
+      botTouch();
       if (mode === "bottom") swipe(z[0], z[1], a[0], a[1], 350);   // drag up = list scrolls to its end
       else swipe(a[0], a[1], z[0], z[1], 350);                      // drag down = list scrolls to its start
       sleep(500);
@@ -4798,6 +4807,7 @@ V("btnForgot").on("click", function () {   // Firebase sends the reset link by e
   });
 });
 function applyLock(lock) {
+  try { if (hideSleeping) wakePanel(); } catch (e) {}
   ui.run(function () {
     var View = android.view.View;
     V("lockBox").setVisibility(lock ? View.VISIBLE : View.GONE);
@@ -4941,6 +4951,64 @@ V("lockTitle").setOnTouchListener(function (view, event) {
   return true;
 });
 
+// ===== AUTO HIDE PANEL (tap the screen to wake it) =====
+// After "Hide after" seconds without a touch the whole panel disappears so the game is clear. ANY tap on the screen brings it back
+// (a 1-pixel invisible overlay receives Android's "touch outside" event for every touch). The script's own taps are ignored.
+// A small dot also stays where the panel was, as a second way to wake it.
+var hideWm = null, hideView = null, hideSleeping = false, lastTouchAt = Date.now(), botTapAt = 0, dotW = null;
+function botTouch() { botTapAt = Date.now(); }
+function closeDot() { if (dotW) { try { dotW.close(); } catch (e) {} dotW = null; } }
+function showDot() {
+  closeDot();
+  try {
+    var dx = 0, dy = 60; try { dx = w.getX(); dy = w.getY(); } catch (e) {}
+    dotW = floaty.window('<text id="dd" text="\u25CF" textColor="#88ffffff" textSize="18sp" padding="8" bg="#33111722"/>');
+    dotW.setPosition(dx, dy);
+    try { dotW.disableFocus(); } catch (e) {}
+    dotW.dd.on("click", function () { wakePanel(); });
+  } catch (e) { log("wake dot err: " + e); }
+}
+function wakePanel() {
+  hideSleeping = false; lastTouchAt = Date.now();
+  closeDot();
+  ui.run(function () { try { V("rootP").setVisibility(android.view.View.VISIBLE); } catch (e) {} });
+}
+function hidePanel() {
+  hideSleeping = true;
+  ui.run(function () { try { releaseFocus(); V("rootP").setVisibility(android.view.View.GONE); } catch (e) {} });
+  showDot();
+}
+function onScreenTouch() {
+  var n = Date.now();
+  if (n - botTapAt < 700) return;                    // the script tapped, not you
+  lastTouchAt = n;
+  if (hideSleeping) wakePanel();
+}
+function startHideWatcher() {
+  ui.run(function () {
+    try {
+      hideWm = context.getSystemService("window");
+      hideView = new android.view.View(context);
+      var type = android.os.Build.VERSION.SDK_INT >= 26 ? 2038 : 2002;
+      var lp = new android.view.WindowManager.LayoutParams(1, 1, type, 8 | 32 | 262144, android.graphics.PixelFormat.TRANSLUCENT);   // not focusable | not touch modal | watch outside touch
+      lp.gravity = 51; lp.x = 0; lp.y = 0;
+      hideView.setOnTouchListener(function (view, ev) { try { if (ev.getAction() === 4) onScreenTouch(); } catch (e) {} return false; });
+      hideWm.addView(hideView, lp);
+      log("auto-hide: watching screen touches");
+    } catch (e) { hideWm = null; hideView = null; log("auto-hide watcher err: " + e); }
+  });
+}
+function stopHideWatcher() {
+  closeDot();
+  try { if (hideWm && hideView) hideWm.removeView(hideView); } catch (e) {}
+  hideWm = null; hideView = null;
+}
+function autoHideTick() {
+  if (!C.autoHide) { if (hideSleeping) wakePanel(); return; }
+  if (hideSleeping || !currentUser) return;          // never hide the login screen
+  if (Date.now() - lastTouchAt > (C.hideSec || 10) * 1000) hidePanel();
+}
+
 // ===== SAFETY WRAPPERS: a thrown error in a button action must never kill the panel or leave a stuck state =====
 (function () {
   var _se = startEngine, _sp = stopEngine, _sr = startRespawn, _spr = stopRespawn, _dq = dgRunQueue, _od = openDaily;
@@ -5003,4 +5071,7 @@ setInterval(function () { try { applyOrientation(false); } catch (e) {} }, 1500)
 // keep the script alive while the panel is open
 try { startForegroundService(); } catch (e) {}
 startExpiredWatcher();
+startHideWatcher();
+try { events.on("exit", function () { try { stopHideWatcher(); } catch (e) {} }); } catch (e) {}   // never leave the touch overlay behind
+setInterval(function () { try { autoHideTick(); } catch (e) {} }, 1000);
 setInterval(function () { DBG.lastTick = Date.now(); }, 1000);   // main-loop tick (stall detector) + keeps the script alive

@@ -19,8 +19,8 @@
 //  Admin can also set/clear users/<uid>.expiresAt (timestamp) in the console at any time.
 //  IP LOCK: only FB.maxPerIp accounts can be created from one public IP (stored hashed in Firestore "ips").
 
-var APP_VERSION = 30;         // bump this on every release you publish (see AUTO UPDATE below) - must stay a whole number
-var APP_LABEL = "12.0";         // what the panel shows; the updater compares APP_VERSION only
+var APP_VERSION = 31;         // bump this on every release you publish (see AUTO UPDATE below) - must stay a whole number
+var APP_LABEL = "12.1";         // what the panel shows; the updater compares APP_VERSION only
 var GW = 2093, GH = 1177;
 var store = storages.create("cabal_respawn_redfinger");
 
@@ -212,6 +212,7 @@ var DBG = (function () {
     var prev = readPrev();
     if (prev && prev.sid !== d.sid) {
       if (!prev.clean) {
+        d.crashed = prev;                              // auto-resume (bottom of the script) reads this
         var gap = ""; try { gap = " (" + Math.round((Date.now() - prev.hbMs) / 1000) + "s ago)"; } catch (e) {}
         var msg = "!! LAST RUN ENDED UNEXPECTEDLY - app force-closed / killed / crashed. Last sign of life " + prev.hb + gap +
                   " | mem " + prev.memMB + " | state " + JSON.stringify(prev.state) + " | last log: " + prev.lastLog;
@@ -384,6 +385,7 @@ function panelJson() {                  // read-only copy of this panel for the 
   var o = { at: Date.now(), v: APP_LABEL, n: APP_VERSION,
     run: !!g(function () { return running; }, false), resp: !!g(function () { return rOn; }, false),
     dg: !!g(function () { return dgBusy; }, false), cap: !!g(function () { return capReady; }, false),
+    crashes: g(function () { return gameCrashes; }, 0),
     game: g(function () { return C.game; }, ""),
     dev: g(function () { return device.brand + " " + device.model + " / Android " + device.release + " / " + device.width + "x" + device.height; }, ""),
     set: g(function () { var c = {}; ["x", "y", "check", "wait", "dx", "dy", "openWait", "vSlot", "pkg", "pkgRA", "autoFit", "autoCheck", "showConsole", "autoOpen", "autoEnter", "autoPopup"].forEach(function (k) { c[k] = C[k]; }); return c; }, {}),
@@ -404,8 +406,8 @@ function fbLogHook(line) {
   if (!fbAuth) return;
   line = String(line);
   if (/^tap /i.test(line) || /\bpin\b/i.test(line)) return;
-  if (!/respawn|reopen|closed|entry screen|sub-password|stopped|popup|daily|err|death|dead|started|finished/i.test(line)) return;
-  fbQueue.push({ msg: line.slice(0, 200), at: new Date().toISOString() });
+  if (!/respawn|reopen|closed|crash|entry screen|sub-password|stopped|popup|daily|err|death|dead|started|finished/i.test(line)) return;
+  fbQueue.push({ msg: line.slice(0, /^GAME CRASH/.test(line) ? 420 : 200), at: new Date().toISOString() });
   if (fbQueue.length > 100) fbQueue.shift();
 }
 // ===== AUTO UPDATE =====
@@ -646,6 +648,7 @@ var w = floaty.window(sc(
       '<button id="btnDetect" text="DETECT SETTINGS + DISPLAY" h="30" bg="#2f5fb3" textColor="#ffffff" textSize="11sp" padding="0" marginTop="2"/>' +
       '<text id="permInfo" text="permissions: checking..." textColor="#6f778a" textSize="10sp" marginTop="2"/>' +
       '<button id="btnPerm" text="CHECK PERMISSIONS" h="30" bg="#2f5fb3" textColor="#ffffff" textSize="11sp" padding="0" marginTop="2"/>' +
+      '<text id="btnCap" text="CAPTURE: AUTO  (tap to change)" textColor="#ffffff" textSize="11sp" textStyle="bold" gravity="center" bg="#3a4152" padding="8" marginTop="2"/>' +
       '<text text="VERADRIX QUICK SLOT (1-8, left to right)" textColor="#6ea8ff" textSize="10sp" textStyle="bold" marginTop="4"/>' +
       '<input id="ivslot" inputType="number" textColor="#ffffff" textSize="14sp" padding="4"/>' +
       '<text id="btnResp" text="RESPAWN: OFF" textColor="#ffffff" textSize="12sp" textStyle="bold" gravity="center" bg="#3a4152" padding="8" marginTop="4"/>' +
@@ -1087,14 +1090,30 @@ function logDevice() {
 var W = 0, H = 0, LAND = true;
 var hasRoot = false, capMode = "none", capReady = false;
 
-var fgOn = false;
+var fgOn = false, fgTries = 0;
 function startForegroundService() {
   if (fgOn) return;
-  fgOn = true;                                     // only try once
-  if (typeof $settings === "undefined" || !$settings || typeof $settings.setEnabled !== "function") return;  // this app version has no $settings: skip silently
-  try { $settings.setEnabled("foreground_service", true); log("foreground service on"); sleep(700); }
-  catch (e) { /* ignore - not supported on this version */ }
+  if (++fgTries > 3) { fgOn = true; return; }      // give up after 3 attempts (capture start / script start)
+  if (typeof $settings === "undefined" || !$settings || typeof $settings.setEnabled !== "function") {
+    log("foreground service: NOT available from the script on this AutoX build - turn it on by hand: AutoX.js > Settings > Foreground service");
+    return;
+  }
+  try {
+    $settings.setEnabled("foreground_service", true);
+    sleep(700);
+    var st = "?";
+    try { st = String($settings.isEnabled("foreground_service")); } catch (e1) {}
+    var np = "?";
+    try { np = (android.os.Build.VERSION.SDK_INT >= 33) ? (context.checkSelfPermission("android.permission.POST_NOTIFICATIONS") === 0 ? "granted" : "DENIED (allow notifications for AutoX.js)") : "n/a"; } catch (e2) {}
+    log("foreground service: set on, state=" + st + " | notifications: " + np);
+    if (st === "true" || st === "?") fgOn = true;
+  } catch (e) {
+    log("foreground service err: " + e + " - turn it on by hand: AutoX.js > Settings > Foreground service");
+  }
 }
+// CAPTURE MODE preference: "auto" (screen-capture permission first, root screencap if that fails) | "projection" (permission only) | "root" (root shell screencap only, no permission prompt)
+function capPref() { try { var v = String(store.get("cap_pref", "auto")); return (v === "projection" || v === "root") ? v : "auto"; } catch (e) { return "auto"; } }
+function capPrefLabel() { var v = capPref(); return v === "projection" ? "SCREEN CAPTURE PERMISSION" : (v === "root" ? "ROOT SCREENCAP" : "AUTO"); }
 function initCapture() {
   if (capReady) return true;
   try { auto.waitFor(); } catch (e) { log("auto.waitFor: " + e); }
@@ -1104,18 +1123,25 @@ function initCapture() {
   if (rootRes === null) { log("root check timed out - no root"); try { th0.interrupt(); } catch (e) {} }
   hasRoot = (rootRes === true);
   log("root: " + hasRoot);
-  threads.start(function () {
+  var pref = capPref();
+  if (pref !== "root") threads.start(function () {      // the "Start now" prompt only appears for the permission mode
     var b = textMatches(/(Start now|START NOW|Allow|ALLOW|\u7acb\u5373\u5f00\u59cb|\u5141\u8bb8)/).findOne(8000);
     if (b) b.click();
   });
   startForegroundService();                        // Android 14+: screen capture is only allowed while the app runs a foreground service
   var okCap = false;
-  var th = threads.start(function () {
-    try { okCap = requestScreenCapture(true); } catch (e) { log("cap err: " + e); }
-    if (!okCap) { try { okCap = requestScreenCapture(false); } catch (e2) { log("cap2 err: " + e2); } }
-  });
-  th.join(15000);
-  if (okCap) capMode = "projection"; else if (hasRoot) capMode = "screencap"; else capMode = "none";
+  if (pref !== "root") {
+    var th = threads.start(function () {
+      try { okCap = requestScreenCapture(true); } catch (e) { log("cap err: " + e); }
+      if (!okCap) { try { okCap = requestScreenCapture(false); } catch (e2) { log("cap2 err: " + e2); } }
+    });
+    th.join(15000);
+  }
+  if (pref === "root") capMode = hasRoot ? "screencap" : "none";
+  else if (okCap) capMode = "projection";
+  else if (pref === "auto" && hasRoot) capMode = "screencap";
+  else capMode = "none";
+  log("capture preference: " + pref + (pref === "root" && !hasRoot ? " (no root on this phone - root capture impossible)" : ""));
   log("capture mode: " + capMode);
   buildMethods();
   sleep(1500);
@@ -1844,6 +1870,7 @@ function findCabalPkg() {
 function openGame(pkg) {
   if (!pkg) { log(gameName() + " not found - type its package name in the panel"); return false; }
   log("opening " + pkg);
+  gameUpAt = Date.now();
   var ok = false;
   try { ok = app.launchPackage(pkg); } catch (e) { log("launch err: " + e); }
   if (!ok && hasRoot) shell("monkey -p " + pkg + " -c android.intent.category.LAUNCHER 1", true);
@@ -1858,6 +1885,33 @@ function gameAlive(pkg) {   // true / false, or null when it cannot be told (no 
     return String(r.result || "").indexOf(pkg) >= 0;
   } catch (e) { return null; }
 }
+// ===== GAME CRASH REPORT: goes to the log file AND (as one event) to the admin's per-user event log =====
+var gameCrashes = 0, lastCrashAt = 0, gameUpAt = 0;
+function crashLogcat(pkg) {              // root only: the last fatal / kill lines about the game from the system log
+  if (!hasRoot || !pkg || !/^[A-Za-z0-9_.]+$/.test(pkg)) return "";
+  try {
+    var r = shell("logcat -d -t 1500 | grep -iE 'FATAL EXCEPTION|ANR in " + pkg + "|am_crash|am_proc_died|am_kill|Fatal signal|SIGSEGV|SIGABRT|lowmemorykiller|OutOfMemory|" + pkg + ".*(died|killed|crash)' | tail -n 6", true);
+    return String(r.result || "").replace(/\s+/g, " ").trim();
+  } catch (e) { return ""; }
+}
+function freeRamText() {
+  try {
+    var mi = new android.app.ActivityManager.MemoryInfo();
+    context.getSystemService("activity").getMemoryInfo(mi);
+    return Math.round(mi.availMem / 1048576) + "MB" + (mi.lowMemory ? " (LOW)" : "");
+  } catch (e) { return "?"; }
+}
+function reportGameCrash(pkg, dead, lastPkg) {
+  var now = Date.now();
+  if (now - lastCrashAt < 20000) return;                       // one report per crash
+  lastCrashAt = now; gameCrashes++;
+  var up = gameUpAt ? Math.round((now - gameUpAt) / 60000) + "m" : "?";
+  var how = dead ? "process gone" : "no window (cannot confirm without root)";
+  var det = crashLogcat(pkg);
+  try { DBG.line("ERR", "GAME CRASH detail: " + (det || "(no logcat - root off or nothing found)") + " | last pkg: " + (lastPkg || "none")); } catch (e) {}
+  gameUpAt = 0;
+  log("GAME CRASH #" + gameCrashes + " " + gameName() + " [" + pkg + "] " + how + " | up " + up + " | free RAM " + freeRamText() + (det ? " | " + det : ""));
+}
 function curPkg() {
   try {                                   // live window first: currentPackage() can stay stale after the app closes
     var root = auto.root;
@@ -1868,7 +1922,7 @@ function curPkg() {
 function ensureGame() {   // returns "none" | "open" | "launched"
   var pkg = findCabalPkg();
   if (!pkg) { log(gameName() + " not found - type its package name in the panel"); return "none"; }
-  if (curPkg() === pkg) { log(gameName() + " already open"); return "open"; }
+  if (curPkg() === pkg) { log(gameName() + " already open"); if (!gameUpAt) gameUpAt = Date.now(); return "open"; }
   openGame(pkg);
   log("waiting " + Math.round(C.openWait / 1000) + "s for the game to load");
   sleep(C.openWait);
@@ -2255,6 +2309,7 @@ function runEngine(testOnly, loginOnly) {
         miss = (other || gone || dead) ? miss + 1 : 0;
         if (pkg && (dead ? miss >= 2 : miss >= 6)) {
           var fresh = dead || !other;                // closed / crashed -> cold start; only in the background -> bring to front
+          if (fresh) { try { reportGameCrash(pkg, dead, cp); } catch (ec) { log("crash report err: " + ec); } }
           log(gameName() + " " + (fresh ? "closed" : "in background") + " (" + (dead ? "not running" : (cp || "no window")) + ") -> reopen");
           miss = 0;
           openGame(pkg);
@@ -3205,6 +3260,7 @@ function dgAutoFind(img) {                        // the AUTO button by picture:
   return null;
 }
 function dgTapAuto() {                            // press the small AUTO button next to the Dungeon quest panel
+  if (dgBusy && (naOn || dgSrc === "NONPREM")) { log("dg auto: NON PREM never taps the small AUTO beside the quest panel - skipped"); return false; }
   var p = null;
   for (var k = 0; k < 4 && !p; k++) {
     var im = grab();
@@ -3373,8 +3429,20 @@ function dqAfterEnd() {
     sleep(DQ_TAP_EVERY);
   }
 }
+function npAlways() { return dgBusy && (naOn || dgSrc === "NONPREM"); }   // NON PREM run: the quest panel is tapped non-stop
+function npQuestTap() {                              // no AUTO DASH switch, no attack / quest / walking pauses: tap the quest panel every DQ_TAP_EVERY ms
+  var now = Date.now();
+  if (now - dqLastTap < DQ_TAP_EVERY) return;
+  dqLastTap = now;
+  tapGame(P_NA_QUEST, "quest panel tap");
+  try { naEvAdd("tap"); } catch (e) {}
+}
 function dqKick() {
-  if (!dashOn()) return;                              // Daily DG: the dungeon has just started -> the FIRST quest also needs the boot button
+  if (!dashOn() && !npAlways()) {                                    // say so: a silent return looked like "the quest area is not tapped"
+    log("AUTO DASH is OFF - no quest taps this run (switch AUTO DASH: ON in the panel)");
+    try { toast("AUTO DASH is OFF - no quest taps"); } catch (et) {}
+    return;
+  }                                                   // Daily DG: the dungeon has just started -> the FIRST quest also needs the boot button
   dqBase = null; dqCand = null; dqMot = null; dqStill = 0; dqLastTap = 0; dqHold = 0; dqHeldLog = false; dqPrevAt = 0; dqTravel = Date.now();
   log("dungeon started -> boot button to the first quest");
 }
@@ -3531,7 +3599,7 @@ function dgAfterChallenge(it) {
   }
   log(seen ? "DAILY DG: dungeon loaded" : "DAILY DG: timer not seen, pressing AUTO anyway");
   sleep(1500); dgChk();
-  if (naOn) {                                     // any NON PREM run: tap the round AUTO below the attack button, NEVER the small one beside the quest panel (dgTapAuto is DAILY DG only)
+  if (naOn || dgSrc === "NONPREM") {              // any NON PREM run: tap the round AUTO below the attack button, NEVER the small one beside the quest panel (dgTapAuto is DAILY DG only)
     var npF0 = npAutoFrac(), npS0 = npF0 < 0 ? null : npF0 >= NP_AUTO_ON_FRAC;
     if (npS0 === true) {
       log("NON PREM DG: AUTO already ON (gold " + npF0.toFixed(3) + ") - no tap");
@@ -3566,7 +3634,7 @@ function dgWaitFinish() {
     if (!im) continue;
     var has = fracIn(im, R_DG_TIMER, isCyan, 3, "R") > 0.04;
     if (has && !seen) { try { dqKick(); } catch (ek) {} }               // first quest of the dungeon: boot right away
-    if (has) { try { dqWatch(im); } catch (eq) {} } else dqReset();     // dungeon only: another quest -> boot button
+    if (has) { try { if (npAlways()) npQuestTap(); else dqWatch(im); } catch (eq) {} } else dqReset();     // dungeon only: NON PREM taps the quest panel non-stop, DAILY DG watches for a new quest -> boot button
     im.recycle();
     if (has) {
       if (!seen) { try { DBG.dgMark("ENTERED", "dungeon timer seen"); } catch (e) {} }
@@ -3868,7 +3936,7 @@ function dgEnterFromBag(it) {         // wrapper: never leave the Inventory wind
 }
 function dgRunQueue() {
   if (dgBusy) return;                            // already running: never start a second queue thread
-  dgBusy = true; dgCancel = false;               // set BEFORE the thread starts (closes the double-tap race)
+  dgBusy = true; dgCancel = false; dgSrc = "DAILY";   // set BEFORE the thread starts (closes the double-tap race)
   dgAutoRun = dgAutoGet(); dgTried = {};
   try { DBG.dgQueue("DAILY", "QUEUE_START", "runs per dungeon: " + dgRunsGet()); } catch (e) {}
   try { closeDaily(); } catch (ec) {}            // the popup must not cover the game while we tap (never let it leave dgBusy stuck)
@@ -3928,6 +3996,7 @@ function dgRunQueue() {
 // Shares dgBusy / dgCancel with DAILY DG, so the two can never run at the same time and the stop logic is the same.
 var P_NA_QUEST = [1835, 272, "R"];              // in dungeon: centre of the Dungeon quest panel text (tapping it = walk to the quest, like by hand)
 var P_DG_ENTER = [1370, 1100];                  // Select Dungeon: normal "enter" button (centre; calibrate here if the tap misses)
+var dgSrc = "";                                  // "NONPREM" / "DAILY": which queue started the current run
 var naOn = false, naMode = "";                  // naMode: "list" = NON PREM DG, "auto" = AUTO DG (only one non-prem command runs at a time: one game screen)
 function naTag() { return naMode === "list" ? "NON PREM DG" : "AUTO DG"; }   // log prefix of the running non-prem command
 function dgWho() { return naOn ? (naMode === "list" ? "NON PREM DG" : "AUTO DG") : "DAILY DG"; }   // name of whatever dungeon command is running now
@@ -4344,7 +4413,7 @@ function npBtnSync() {
 setInterval(npBtnSync, 1000);
 function npRunQueue() {
   if (dgBusy) return;                                  // already running (daily or non prem): never a second queue
-  dgBusy = true; dgCancel = false; naOn = true; naMode = "list"; dgTried = {}; naCap = 0;   // set BEFORE the thread starts (naCap reset: never inherit an AUTO DG stall limit)
+  dgBusy = true; dgCancel = false; naOn = true; naMode = "list"; dgSrc = "NONPREM"; dgTried = {}; naCap = 0;   // set BEFORE the thread starts (naCap reset: never inherit an AUTO DG stall limit)
   try { DBG.dgQueue("NONPREM", "QUEUE_START", "runs per dungeon: " + npRunsGet()); } catch (e) {}
   try { closeNp(); } catch (ec) {}                     // the popup must not cover the game while we tap
   threads.start(function () {
@@ -4479,6 +4548,20 @@ function openNp() {
 }
 npSelLoadIfEmpty();
 V("btnNPList").on("click", openNp);
+function capBtnSync() { try { var t = "CAPTURE: " + capPrefLabel() + "  (tap to change)"; ui.run(function () { try { V("btnCap").setText(t); } catch (e) {} }); } catch (e) {} }
+V("btnCap").on("click", function () {
+  if (dgBusy || (typeof rOn !== "undefined" && rOn)) { toast("Stop RESPAWN / DG first, then change the capture mode"); return; }
+  var cur = capPref(), nxt = cur === "auto" ? "projection" : (cur === "projection" ? "root" : "auto");
+  try { store.put("cap_pref", nxt); } catch (e) {}
+  capReady = false; capMode = "none"; capRetries = 0;               // forget the old mode: the next capture start uses the new one
+  capBtnSync();
+  log("capture mode preference -> " + nxt);
+  toast("Capture: " + capPrefLabel() + " - starting it now...");
+  threads.start(function () {
+    try { var ok = ensureCapture(); toast(ok ? "Capture ready: " + capMode : "Capture failed (" + capPrefLabel() + ")"); } catch (e) { log("capture switch err: " + e); }
+  });
+});
+capBtnSync();
 V("btnDash").on("click", function () {
   var on = !dashOn();
   try { store.put("dash_on", on); } catch (e) {}
@@ -5453,7 +5536,8 @@ function showDot() {
     dotW = floaty.window('<text id="dd" text="\u25CF" textColor="#88ffffff" textSize="18sp" padding="8" bg="#33111722"/>');
     dotW.setPosition(dx, dy);
     try { dotW.disableFocus(); } catch (e) {}
-    dotW.dd.on("click", function () { wakePanel(); });
+    var hook = function () { var el = null; try { el = dotW && dotW.dd; } catch (e0) {} if (el) { el.on("click", function () { wakePanel(); }); return true; } return false; };
+    if (!hook()) setTimeout(function () { try { if (!hook()) { log("wake dot: view not ready - tap the screen to wake the panel"); } } catch (e1) {} }, 300);
   } catch (e) { log("wake dot err: " + e); }
 }
 function wakePanel() {
@@ -5554,6 +5638,23 @@ if (autoSaved && (autoSaved.a ? C.autoLogin : true)) {   // users: always sign i
     });
   });
 }
+// AUTO RESUME: if the previous run was killed (not QUIT / STOP) while the play engine was running, press play again once
+// the account is signed in. Only for a recent crash (< 15 min ago). Turn off with store key "autoResume" = false.
+try {
+  var _cr = DBG.crashed;
+  var _want = _cr && _cr.state && (_cr.state.running === true || _cr.state.keepRun === true) && (Date.now() - (_cr.hbMs || 0) < 15 * 60 * 1000);
+  if (_want && store.get("autoResume", true) !== false) {
+    threads.start(function () {
+      for (var t = 0; t < 120 && !currentUser; t++) sleep(500);       // wait for (auto) login, up to 60s
+      if (!currentUser) { log("auto resume: not signed in - skipped"); return; }
+      sleep(2500);
+      if (running || dgBusy) return;
+      log("auto resume: previous run was killed while playing - starting again");
+      toast("Auto resume");
+      ui.run(function () { try { startEngine(); } catch (e) { log("auto resume err: " + e); } });
+    });
+  }
+} catch (e) { log("auto resume setup err: " + e); }
 setInterval(function () { try { applyOrientation(false); } catch (e) {} }, 1500);
 
 // keep the script alive while the panel is open

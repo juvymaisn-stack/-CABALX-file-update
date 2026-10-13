@@ -19,8 +19,8 @@
 //  Admin can also set/clear users/<uid>.expiresAt (timestamp) in the console at any time.
 //  IP LOCK: only FB.maxPerIp accounts can be created from one public IP (stored hashed in Firestore "ips").
 
-var APP_VERSION = 29;         // bump this on every release you publish (see AUTO UPDATE below) - must stay a whole number
-var APP_LABEL = "11.9";         // what the panel shows; the updater compares APP_VERSION only
+var APP_VERSION = 30;         // bump this on every release you publish (see AUTO UPDATE below) - must stay a whole number
+var APP_LABEL = "12.0";         // what the panel shows; the updater compares APP_VERSION only
 var GW = 2093, GH = 1177;
 var store = storages.create("cabal_respawn_redfinger");
 
@@ -649,6 +649,11 @@ var w = floaty.window(sc(
       '<text text="VERADRIX QUICK SLOT (1-8, left to right)" textColor="#6ea8ff" textSize="10sp" textStyle="bold" marginTop="4"/>' +
       '<input id="ivslot" inputType="number" textColor="#ffffff" textSize="14sp" padding="4"/>' +
       '<text id="btnResp" text="RESPAWN: OFF" textColor="#ffffff" textSize="12sp" textStyle="bold" gravity="center" bg="#3a4152" padding="8" marginTop="4"/>' +
+      '<text id="btnDash" text="AUTO DASH: ON" textColor="#ffffff" textSize="12sp" textStyle="bold" gravity="center" bg="#2f7d4a" padding="8" marginTop="4"/>' +
+      '<horizontal marginTop="4">' +
+        '<text id="btnAutoBelow" text="AUTO below attack" textColor="#ffffff" textSize="11sp" textStyle="bold" gravity="center" bg="#2b5fa8" padding="8" layout_weight="1"/>' +
+        '<text id="btnAutoQuest" text="AUTO beside quest" textColor="#ffffff" textSize="11sp" textStyle="bold" gravity="center" bg="#7a5a1a" padding="8" layout_weight="1" marginLeft="4"/>' +
+      '</horizontal>' +
       // ---- 1) DAILY DG - premium (bag items / Item Entrance). Own command, own popup ----
       '<vertical id="dailyBox" bg="#1f2a3a" padding="4" marginTop="4">' +
         '<text text="1. DAILY DG - PREMIUM" textColor="#6ea8ff" textSize="10sp" textStyle="bold"/>' +
@@ -3223,13 +3228,14 @@ function npAutoFrac() {                             // share of gold/orange pixe
   try {
     var im = grab(); if (!im) return -1;
     var warm = 0, n = 0;
-    for (var dy = -42; dy <= 42; dy += 4) for (var dx = -42; dx <= 42; dx += 4) {
-      if (dx * dx + dy * dy > 42 * 42) continue;
-      var c = pix(im, [P_NP_AUTO[0] + dx, P_NP_AUTO[1] + dy, "R"]);
-      var r = colors.red(c), g = colors.green(c), bl = colors.blue(c);
-      n++; if (r > 150 && r > bl + 70 && g > bl + 30) warm++;
-    }
-    im.recycle();
+    try {
+      for (var dy = -42; dy <= 42; dy += 4) for (var dx = -42; dx <= 42; dx += 4) {
+        if (dx * dx + dy * dy > 42 * 42) continue;
+        var c = pix(im, [P_NP_AUTO[0] + dx, P_NP_AUTO[1] + dy, "R"]);
+        var r = colors.red(c), g = colors.green(c), bl = colors.blue(c);
+        n++; if (r > 150 && r > bl + 70 && g > bl + 30) warm++;
+      }
+    } finally { try { im.recycle(); } catch (er) {} }       // always release the screenshot, even if a pixel read throws
     return n ? warm / n : -1;
   } catch (e) { return -1; }
 }
@@ -3290,7 +3296,21 @@ function dqMotDiff(a, b) {                       // share of samples that change
   for (var i = 0; i < a.length; i++) if (Math.abs(a[i] - b[i]) > 35) n++;
   return a.length ? n / a.length : 0;
 }
-function dqWatch(img) {                          // img = fresh screenshot taken INSIDE a dungeon; true = boot tapped
+// AUTO DASH switch: ON = the script walks to the dungeon quests by itself (boot button / quest panel taps). OFF = no quest taps at all.
+function dashOn() { try { return store.get("dash_on", true) !== false; } catch (e) { return true; } }
+function dashSync() {
+  try {
+    var on = dashOn();
+    ui.run(function () {
+      try {
+        V("btnDash").setText(on ? "AUTO DASH: ON" : "AUTO DASH: OFF");
+        V("btnDash").setBackgroundColor(android.graphics.Color.parseColor(on ? "#2f7d4a" : "#3a4152"));
+      } catch (e) {}
+    });
+  } catch (e) {}
+}
+function dqWatch(img) {
+  if (!dashOn()) return false;                          // img = fresh screenshot taken INSIDE a dungeon; true = boot tapped
   var P = dqP(), now = Date.now(), tapped = false, changed = false, d = 0;
   var dt = dqPrevAt ? Math.min(now - dqPrevAt, 3000) : 0; dqPrevAt = now;
   // 1) did the Dungeon quest panel switch to another quest (big change) or is a counter moving (small change = questing)?
@@ -3333,7 +3353,8 @@ function dqWatch(img) {                          // img = fresh screenshot taken
   }
   return tapped;
 }
-function dqAfterEnd() {                          // dungeon is over (back in town): keep tapping the boot until the character reaches the next quest
+function dqAfterEnd() {
+  if (!dashOn()) return;                          // dungeon is over (back in town): keep tapping the boot until the character reaches the next quest
   var P = dqP(), t0 = Date.now(), still = 0, mot = null;
   dqReset();
   log("DAILY DG: dungeon ended -> boot taps continue to the next quest");
@@ -3352,11 +3373,13 @@ function dqAfterEnd() {                          // dungeon is over (back in tow
     sleep(DQ_TAP_EVERY);
   }
 }
-function dqKick() {                              // Daily DG: the dungeon has just started -> the FIRST quest also needs the boot button
+function dqKick() {
+  if (!dashOn()) return;                              // Daily DG: the dungeon has just started -> the FIRST quest also needs the boot button
   dqBase = null; dqCand = null; dqMot = null; dqStill = 0; dqLastTap = 0; dqHold = 0; dqHeldLog = false; dqPrevAt = 0; dqTravel = Date.now();
   log("dungeon started -> boot button to the first quest");
 }
-function dqLook() {                              // for the RESPAWN loop (dungeons you run by hand): one look, only inside a dungeon
+function dqLook() {
+  if (!dashOn()) return;                              // for the RESPAWN loop (dungeons you run by hand): one look, only inside a dungeon
   if (Date.now() - dqLastLook < (dqTravel ? 600 : 1500)) return;
   dqLastLook = Date.now();
   var im = grab();
@@ -3508,7 +3531,7 @@ function dgAfterChallenge(it) {
   }
   log(seen ? "DAILY DG: dungeon loaded" : "DAILY DG: timer not seen, pressing AUTO anyway");
   sleep(1500); dgChk();
-  if (naOn && naMode === "list") {                // NON PREM DG: tap the AUTO below the attack button (not the small one at the top right)
+  if (naOn) {                                     // any NON PREM run: tap the round AUTO below the attack button, NEVER the small one beside the quest panel (dgTapAuto is DAILY DG only)
     var npF0 = npAutoFrac(), npS0 = npF0 < 0 ? null : npF0 >= NP_AUTO_ON_FRAC;
     if (npS0 === true) {
       log("NON PREM DG: AUTO already ON (gold " + npF0.toFixed(3) + ") - no tap");
@@ -4456,6 +4479,45 @@ function openNp() {
 }
 npSelLoadIfEmpty();
 V("btnNPList").on("click", openNp);
+V("btnDash").on("click", function () {
+  var on = !dashOn();
+  try { store.put("dash_on", on); } catch (e) {}
+  dashSync();
+  toast(on ? "Auto dash ON - quest taps in dungeons" : "Auto dash OFF - no quest taps");
+  log("AUTO DASH " + (on ? "ON" : "OFF"));
+});
+dashSync();
+// ---- manual AUTO buttons (work in the map and in a dungeon) ----
+// "below attack" = the round AUTO with 2 arrows (map + dungeon): tapped only when it is seen OFF.
+// "beside quest" = the small dungeon AUTO next to the Dungeon quest panel (dungeon only; its state can't be read, so each press toggles it).
+var manualAutoBusy = false;
+function manualAuto(kind) {
+  if (manualAutoBusy) return;
+  if (dgBusy) { toast(dgWho() + " is running - stop it first"); return; }
+  manualAutoBusy = true;
+  threads.start(function () {
+    try {
+      if (!ensureCapture()) { toast("No screen capture - allow screen capture for AutoX.js"); return; }
+      if (kind === "below") {
+        var f0 = npAutoFrac();
+        if (f0 >= NP_AUTO_ON_FRAC) { toast("AUTO below attack is already ON"); log("manual AUTO (below attack): already ON (gold " + f0.toFixed(3) + ")"); return; }
+        tapGame(P_NP_AUTO, "manual AUTO (below attack)");
+        sleep(800);
+        var f1 = npAutoFrac();
+        toast(f1 >= NP_AUTO_ON_FRAC ? "AUTO below attack: ON" : "AUTO below attack tapped");
+        log("manual AUTO (below attack): gold " + (f0 < 0 ? "?" : f0.toFixed(3)) + " -> " + (f1 < 0 ? "?" : f1.toFixed(3)));
+      } else {
+        if (!dgInDungeon()) { toast("Not in a dungeon - this AUTO only exists inside one"); log("manual AUTO (beside quest): not in a dungeon, no tap"); return; }
+        var ok = dgTapAuto();
+        toast(ok ? "AUTO beside quest tapped" : "AUTO beside quest not found");
+        log("manual AUTO (beside quest): " + (ok ? "tapped" : "not found"));
+      }
+    } catch (e) { log("manual AUTO err: " + e); }
+    finally { manualAutoBusy = false; }
+  });
+}
+V("btnAutoBelow").on("click", function () { manualAuto("below"); });
+V("btnAutoQuest").on("click", function () { manualAuto("quest"); });
 V("btnNP").on("click", function () {
   if (dgBusy && !naOn) { toast(dgWho() + " is running - stop it with its own button first"); return; }
   if (dgBusy && naOn) { dgCancel = true; dgTried = {}; toast("Non prem DG OFF"); npBtnSync(); return; }    // ON -> OFF: stop

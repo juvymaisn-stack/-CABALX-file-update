@@ -19,8 +19,8 @@
 //  Admin can also set/clear users/<uid>.expiresAt (timestamp) in the console at any time.
 //  IP LOCK: only FB.maxPerIp accounts can be created from one public IP (stored hashed in Firestore "ips").
 
-var APP_VERSION = 11;         // bump this on every release you publish (see AUTO UPDATE below) - must stay a whole number
-var APP_LABEL = "10.1";         // what the panel shows; the updater compares APP_VERSION only
+var APP_VERSION = 17;         // bump this on every release you publish (see AUTO UPDATE below) - must stay a whole number
+var APP_LABEL = "10.7";         // what the panel shows; the updater compares APP_VERSION only
 var GW = 2093, GH = 1177;
 var store = storages.create("cabal_respawn_redfinger");
 
@@ -328,9 +328,22 @@ function noteSrv(res) {
   } catch (e) {}
 }
 var fbWarned = false, fbSeq = 0;
+function panelJson() {                  // read-only copy of this panel for the owner's MONITOR (never includes the sub-password / tokens)
+  function g(f, d) { try { return f(); } catch (e) { return d; } }
+  var o = { at: Date.now(), v: APP_LABEL, n: APP_VERSION,
+    run: !!g(function () { return running; }, false), resp: !!g(function () { return rOn; }, false),
+    dg: !!g(function () { return dgBusy; }, false), cap: !!g(function () { return capReady; }, false),
+    game: g(function () { return C.game; }, ""),
+    dev: g(function () { return device.brand + " " + device.model + " / Android " + device.release + " / " + device.width + "x" + device.height; }, ""),
+    set: g(function () { var c = {}; ["x", "y", "check", "wait", "dx", "dy", "openWait", "vSlot", "pkg", "pkgRA", "autoFit", "autoCheck", "showConsole", "autoOpen", "autoEnter", "autoPopup"].forEach(function (k) { c[k] = C[k]; }); return c; }, {}),
+    log: g(function () { return logLines.filter(function (l) { return !/\bpin\b|password/i.test(l); }).slice(-20).map(function (l) { return String(l).slice(0, 110); }); }, []) };
+  var j = JSON.stringify(o);
+  while (j.length > 6000 && o.log.length) { o.log.shift(); j = JSON.stringify(o); }
+  return j;
+}
 function fbPush(state) {
   if (!fbAuth) return;
-  var r = fbCommit([fsDoc("users/" + fbAuth.uid, { state: state, user: currentUser }, ["lastSeen"])]);
+  var r = fbCommit([fsDoc("users/" + fbAuth.uid, { state: state, user: currentUser, panel: panelJson() }, ["lastSeen"])]);
   if (r && r.statusCode >= 300 && !fbWarned) { fbWarned = true; log("cloud sync HTTP " + r.statusCode + " - check Firestore rules"); }
 }
 // only high-level events go to the cloud; anything PIN-related or per-tap noise is dropped
@@ -416,6 +429,13 @@ function fbStart() {
           if (a) {
             acctExp = a.exp; acctAdmin = a.admin;
             if (!a.admin && a.bound && a.bound !== myDeviceId()) { kickOut("Account locked to another device"); return; }
+            if (!a.admin && (a.cmd === "stop" || a.cmd === "kick")) {      // remote command from the owner (checked every ~2.5 min)
+              try { fbCommit([fsDoc("users/" + fbAuth.uid, { cmd: "" })]); } catch (e) {}   // clear it first so it runs once
+              log("owner command: " + a.cmd);
+              if (a.cmd === "kick") { kickOut("Logged out by the owner"); return; }
+              try { haltAll(); } catch (e) {}
+              toast("Stopped by the owner");
+            }
           }
         }
         if (!acctAdmin && acctExp && nowMs() >= acctExp) { kickOut("Account expired - enter a new key to log in"); return; }
@@ -525,6 +545,7 @@ var w = floaty.window(sc(
     '</ScrollView></vertical>' +
     // ---- body (collapsible) ----
     '<ScrollView id="bodyScroll"><vertical id="body">' +
+      '<button id="btnHelp" text="HOW TO USE (TUTORIAL)" h="34" bg="#2e7d32" textColor="#ffffff" textSize="11sp" padding="0" marginTop="4"/>' +
       '<text text="SAVED SPOT (Porta Inferno)" textColor="#6ea8ff" textSize="10sp" textStyle="bold" marginTop="6"/>' +
       inRow("ix", "X (0-255)", "iy", "Y (0-255)") +
       '<text id="preview" text="" textColor="#6f778a" textSize="10sp"/>' +
@@ -608,6 +629,8 @@ var w = floaty.window(sc(
         '<button id="btnDelUser" text="DEL USER" layout_weight="1" h="36" bg="#7a2a2a" textColor="#ffffff" textSize="11sp" padding="0" marginLeft="4"/>' +
         '<button id="btnLogout" text="LOGOUT" layout_weight="1" h="36" bg="#5a4a1a" textColor="#ffffff" textSize="11sp" padding="0" marginLeft="4"/>' +
       '</horizontal>' +
+      '<button id="btnRelease" text="RELEASE LATEST PATCH TO USERS" visibility="gone" w="match_parent" h="36" bg="#b5472a" textColor="#ffffff" textSize="11sp" padding="0" marginTop="4"/>' +
+      '<button id="btnMonitor" text="MONITOR USERS  (live logs)" visibility="gone" w="match_parent" h="36" bg="#1f6f8b" textColor="#ffffff" textSize="11sp" padding="0" marginTop="4"/>' +
       '<button id="btnUpdate" text="UPDATE SCRIPT  (v' + APP_LABEL + ')" w="match_parent" h="36" bg="#6a3fa0" textColor="#ffffff" textSize="11sp" padding="0" marginTop="4"/>' +
       '<horizontal marginTop="4">' +
         '<button id="btnTest" text="TEST" layout_weight="1" h="40" bg="#2f5fb3" textColor="#ffffff" textSize="12sp" padding="0"/>' +
@@ -1103,6 +1126,7 @@ function applyView(r) {
   VIEW = r; VIEW_OK = r.ok;
   var sc2 = Math.min(r.w / GW, r.h / GH);
   var txt = "area " + r.x + "," + r.y + "  " + r.w + "x" + r.h + "  scale " + (Math.round(sc2 * 1000) / 1000) + (r.src ? "  [" + r.src + "]" : "") + (r.ok ? "" : "  (full screen, retrying)");
+  var warn = "";
   try {
     var dev = detectDevice();
     if (dev.type === "emulator") {
@@ -1110,13 +1134,13 @@ function applyView(r) {
       var head = dev.label + "  settings " + es.w + "x" + es.h + " @" + es.dpi + "dpi  |  " + es.cores + " CPU cores";
       if (r.cw && es.w && (Math.abs(r.cw - es.w) > 2 || Math.abs(r.ch - es.h) > 2)) {
         head += "  | capture " + r.cw + "x" + r.ch + " (differs from emulator setting)";
-        log(dev.label + ": capture " + r.cw + "x" + r.ch + " differs from the emulator setting " + es.w + "x" + es.h + " - taps use the capture size");
+        warn = dev.label + ": capture " + r.cw + "x" + r.ch + " differs from the emulator setting " + es.w + "x" + es.h + " - taps use the capture size";
       }
       txt = head + "\n" + txt;
     }
   } catch (e) {}
   try { showPerms(); } catch (e) {}
-  if (txt !== viewTxt) { log("game " + txt.replace(/\n/g, " | ")); showView(txt); }
+  if (txt !== viewTxt) { if (warn) log(warn); log("game " + txt.replace(/\n/g, " | ")); showView(txt); }   // log only when the text changed (no repeat on every re-fit)
 }
 
 // captureScreen() returns a SHARED image: the very same object again while the screen has not changed (a static loading
@@ -2372,6 +2396,7 @@ function quitAll() {
   try { closeFp(); } catch (e) {}
   try { closeDg(); } catch (e) {}
   try { closeDaily(); } catch (e) {}
+  try { closeHelp(); } catch (e) {}
   try { threads.start(function () { fbSignOut(who); }).join(3000); } catch (e) {}
   stopEngine();
   try { console.hide(); } catch (e) {}
@@ -2455,7 +2480,7 @@ function fbPullAccount() {              // {bound: deviceId, exp: ms} or null wh
     if (res.statusCode !== 200) return null;
     var f = fbBody(res).fields || {};
     var ts = (f.expiresAt && f.expiresAt.timestampValue) ? Date.parse(String(f.expiresAt.timestampValue).replace(/\.\d+Z$/, "Z")) : 0;
-    return { bound: (f.deviceId && f.deviceId.stringValue) || "", exp: ts || 0, admin: !!(f.admin && f.admin.booleanValue === true) };
+    return { bound: (f.deviceId && f.deviceId.stringValue) || "", exp: ts || 0, admin: !!(f.admin && f.admin.booleanValue === true), cmd: (f.cmd && f.cmd.stringValue) || "" };
   } catch (e) { return null; }
 }
 // after sign-in: returns "OK" (this device is allowed / now bound), "OTHER" (locked to another device) or "NETWORK"
@@ -2810,6 +2835,110 @@ function openDg() {
   dgRender();
 }
 V("btnDg").on("click", openDg);
+
+// ===== HOW TO USE (step-by-step tutorial window) =====
+var HELP_STEPS = [
+  { t: "1. Log in",
+    b: "The panel is locked until you log in.\n\n" +
+       "- Type your access key (if the box is shown), username and password, then tap LOGIN.\n" +
+       "- New user? Tap \"No account? Register\".\n" +
+       "- Move the panel by dragging its status text (● IDLE) or the LOGIN title.\n" +
+       "- ▲ / ⚙ opens and closes the settings list." },
+  { t: "2. Allow permissions",
+    b: "AutoX.js needs these to work:\n\n" +
+       "- Display over other apps (the floating panel)\n" +
+       "- Accessibility service ON (to tap the game)\n" +
+       "- Screen capture (asked the first time you press play)\n" +
+       "- Battery: set AutoX.js to Unrestricted / Don't optimize, so Android does not kill it\n\n" +
+       "Open the settings (▲) and tap CHECK PERMISSIONS. The line above it turns green when everything is OK; if not, the button opens the right Android screen." },
+  { t: "3. Game display area",
+    b: "Open the game in LANDSCAPE first.\n\n" +
+       "- Keep \"Auto-detect game display area\" ON.\n" +
+       "- Tap DETECT SETTINGS + DISPLAY. The info line shows the game area it found (on an emulator also its resolution, DPI and CPU cores).\n" +
+       "- If taps land a little off, use Offset X / Offset Y under MAP FINE-TUNE.\n" +
+       "- Changed the emulator resolution? Tap DETECT again." },
+  { t: "4. Save your spot",
+    b: "This is the place the script brings you back to after you die.\n\n" +
+       "- Stand on the spot in the game (e.g. Porta Inferno).\n" +
+       "- Tap SET SPOT FROM CHARACTER. It opens the map, finds your character and fills X and Y.\n" +
+       "- Tap SAVE.\n\n" +
+       "You can also type X / Y (0-255) by hand." },
+  { t: "5. Respawn + Veradrix",
+    b: "- Tap RESPAWN: OFF so it turns ON. When your character dies the script picks the resurrection option, waits \"Wait after respawn\" and returns to your saved spot.\n" +
+       "- \"Check every\" is how often (ms) it looks at the screen.\n" +
+       "- Set VERADRIX QUICK SLOT (1-8, left to right) to the slot that holds the Protection of Veradrix, then tap USE PROTECTION OF VERADRIX any time to use it.\n" +
+       "- TEST does one test run and writes what it sees to the log." },
+  { t: "6. Play button + auto switches",
+    b: "- ▶ opens the game, logs in and enters your sub-password (PIN), depending on the switches below. ■ stops it.\n" +
+       "- Auto open / reopen game: starts the game for you.\n" +
+       "- Auto enter game: taps through to Game start.\n" +
+       "- Auto close popups + daily reward: closes popups and collects the daily reward.\n" +
+       "- Tap AUTO only if off: turns the game's auto-attack on when it is off.\n" +
+       "- Fill Game load wait (ms) and Sub-password if you want auto login to the game.\n" +
+       "- GAME: tap it to switch between Cabal Mobile and Return of Action (stop everything first)." },
+  { t: "7. Dungeons",
+    b: "DAILY DG\n" +
+       "Open the game's Dungeon screen, tap DAILY DG, switch ON the dungeons you want (or press RUN beside one), then use the DAILY DG: ON button.\n\n" +
+       "AUTO DG - NON PREMIUM\n" +
+       "Stand at the dungeon gate, open Select Dungeon once and pick the dungeon. Set Runs (0 = until no entries are left), then tap AUTO DUNGEON RUN: ON.\n\n" +
+       "DG LIST shows all dungeons; tap an entry to copy its name." },
+  { t: "8. Tips",
+    b: "- The LOG shows everything the script does; tap clear to empty it.\n" +
+       "- SAVE keeps your settings. QUIT closes the panel and ends the script.\n" +
+       "- UPDATE SCRIPT checks for a new version.\n" +
+       "- If the log says \"ended unexpectedly\", AutoX.js was closed or killed by Android. Check CHECK PERMISSIONS (battery) and keep the emulator / phone awake.\n" +
+       "- Stuck? Press ■, then ▶ again, or tap DETECT SETTINGS + DISPLAY." }
+];
+var hw = null, hpage = 0;
+function closeHelp() { if (hw) { try { hw.close(); } catch (e) {} hw = null; } }
+function helpRender() {
+  if (!hw) return;
+  var st = HELP_STEPS[hpage];
+  ui.run(function () {
+    try {
+      hw.hlStep.setText(st.t + "   (" + (hpage + 1) + "/" + HELP_STEPS.length + ")");
+      hw.hlBody.setText(st.b);
+      hw.hlScroll.scrollTo(0, 0);
+      hw.hlBack.setAlpha(hpage === 0 ? 0.4 : 1);
+      hw.hlNext.setText(hpage === HELP_STEPS.length - 1 ? "DONE" : "NEXT");
+    } catch (e) {}
+  });
+}
+function openHelp() {
+  if (hw) { closeHelp(); return; }              // button toggles the tutorial
+  hpage = 0;
+  hw = floaty.window(sc(
+    '<vertical w="300" bg="#F2111722" padding="4">' +
+      '<horizontal gravity="center_vertical">' +
+        '<text id="hlHdr" text="HOW TO USE (drag here)" textColor="#6ea8ff" textSize="12sp" textStyle="bold" layout_weight="1" padding="6"/>' +
+        '<text id="hlClose" text="\u2715" textColor="#ffffff" textSize="16sp" textStyle="bold" padding="8"/>' +
+      '</horizontal>' +
+      '<text id="hlStep" text="" textColor="#e0b84a" textSize="12sp" textStyle="bold" padding="4"/>' +
+      '<ScrollView id="hlScroll" h="250" bg="#0b0e13">' +
+        '<text id="hlBody" text="" textColor="#e8ecf5" textSize="11sp" padding="8"/>' +
+      '</ScrollView>' +
+      '<horizontal marginTop="4">' +
+        '<button id="hlBack" text="BACK" layout_weight="1" h="36" bg="#2a3345" textColor="#ffffff" textSize="11sp" padding="0"/>' +
+        '<button id="hlNext" text="NEXT" layout_weight="1" h="36" bg="#2f5fb3" textColor="#ffffff" textSize="11sp" padding="0" marginLeft="4"/>' +
+      '</horizontal>' +
+    '</vertical>'
+  ));
+  hw.setPosition(40, 120);
+  try { hw.disableFocus(); } catch (e) {}
+  var hx0, hy0, hwx, hwy;
+  hw.hlHdr.setOnTouchListener(function (view, event) {
+    switch (event.getAction()) {
+      case 0: hx0 = event.getRawX(); hy0 = event.getRawY(); hwx = hw.getX(); hwy = hw.getY(); return true;
+      case 2: hw.setPosition(hwx + (event.getRawX() - hx0), hwy + (event.getRawY() - hy0)); return true;
+    }
+    return true;
+  });
+  hw.hlClose.on("click", closeHelp);
+  hw.hlBack.on("click", function () { if (hpage > 0) { hpage--; helpRender(); } });
+  hw.hlNext.on("click", function () { if (hpage < HELP_STEPS.length - 1) { hpage++; helpRender(); } else closeHelp(); });
+  helpRender();
+}
+V("btnHelp").on("click", openHelp);
 
 // ===== DAILY DG (popup list with a RUN button per dungeon) =====
 // Open the game's Dungeon screen first, then tap DAILY DG and press RUN beside a dungeon. The script picks that row,
@@ -4126,6 +4255,216 @@ V("btnGhPub").on("click", function () {
   });
 });
 
+// ===== OWNER: ONE-TAP RELEASE (USERS section) =====
+// Re-uses the repo / branch / path / file / token saved by PUBLISH TO GITHUB, so after the first publish
+// a new patch is: save the file on the phone (APP_VERSION raised) -> RELEASE LATEST PATCH -> tap again to confirm.
+var relArm = 0, relBusy = false;
+V("btnRelease").on("click", function () {
+  if (!acctAdmin) { toast("Owner only"); return; }
+  if (relBusy) { toast("Release already running"); return; }
+  var o = {};
+  try { o = JSON.parse(store.get("gh_cfg", "{}")); } catch (e) {}
+  var tok = ""; try { tok = o.tok ? credDec(o.tok) : ""; } catch (e) {}
+  if (!o.repo || !o.path || !o.file || tok.length < 20) { toast("Fill the PUBLISH UPDATE box and press PUBLISH TO GITHUB once first"); return; }
+  if (Date.now() - relArm > 6000) {                       // first tap only arms it: a release reaches every user
+    relArm = Date.now();
+    toast("Tap again within 6s to release " + o.file.split("/").pop() + " to ALL users");
+    return;
+  }
+  relArm = 0; relBusy = true;
+  releaseFocus();
+  toast("Releasing...");
+  threads.start(function () {
+    var msg;
+    try { msg = ghPublish(o.repo, o.branch || "main", o.path, o.file, tok); } catch (e) { msg = "Release error: " + e; }
+    relBusy = false;
+    toast(msg);
+    ui.run(function () { try { V("ghOut").setText(msg); } catch (e) {} });
+  });
+});
+
+// ===== OWNER: MONITOR PANEL (popup with every user's state + recent log events) =====
+// Reads Firestore users/<uid> (state, user, lastSeen) and users/<uid>/events (msg, at).
+// Needs Firestore rules that let the admin account READ users/{uid} and users/{uid}/events/{id}.
+var monw = null, monUid = "", monName = "", monMsg = "";
+var monUsers = [], monEvents = [], monInfo = null, monArm = { l: "", t: 0 };
+function closeMon() { if (monw) { try { monw.close(); } catch (e) {} monw = null; } }
+function fsGetJson(path, qs) {
+  if (!fbAuth) return { err: "Log in first" };
+  if (Date.now() > fbAuth.exp && !fbRefresh()) return { err: "Session expired - log in again" };
+  var res = http.get("https://firestore.googleapis.com/v1/" + FS_DOC + "/" + path + (qs ? "?" + qs : ""),
+                     { headers: { "Authorization": "Bearer " + fbAuth.idToken } });
+  noteSrv(res);
+  if (res.statusCode !== 200) return { err: "HTTP " + res.statusCode + (res.statusCode === 403 ? " - give the admin read rules on users" : "") };
+  return { j: fbBody(res) };
+}
+function fsStr(f, k) { return (f && f[k] && f[k].stringValue) || ""; }
+function fsTs(f, k) { var v = f && f[k] && f[k].timestampValue; return v ? (Date.parse(v) || 0) : 0; }
+function agoText(ms) {
+  if (!ms) return "never";
+  var s = Math.max(0, Math.round((nowMs() - ms) / 1000));
+  if (s < 90) return s + "s ago";
+  if (s < 5400) return Math.round(s / 60) + "m ago";
+  if (s < 172800) return Math.round(s / 3600) + "h ago";
+  return Math.round(s / 86400) + "d ago";
+}
+function monOnline(u) { return u.state !== "offline" && u.seen && (nowMs() - u.seen) < 5 * 60000; }   // heartbeat is ~2 min
+function monFetch() {
+  var win = monw;
+  if (!win) return;
+  var msg = "";
+  if (!monUid) {
+    var r = fsGetJson("users", "pageSize=300");
+    if (r.err) msg = r.err;
+    else {
+      var docs = r.j.documents || [], list = [];
+      for (var i = 0; i < docs.length; i++) {
+        var f = docs[i].fields || {}, nm = String(docs[i].name || ""), uid = nm.slice(nm.lastIndexOf("/") + 1);
+        list.push({ uid: uid, name: fsStr(f, "user") || fsStr(f, "name") || fsStr(f, "email") || uid.slice(0, 6),
+                    state: fsStr(f, "state") || "?", seen: fsTs(f, "lastSeen"), admin: !!(f.admin && f.admin.booleanValue === true) });
+      }
+      list.sort(function (a, b) { var oa = monOnline(a) ? 1 : 0, ob = monOnline(b) ? 1 : 0; return ob - oa || b.seen - a.seen; });
+      monUsers = list;
+    }
+  } else {
+    var r2 = fsGetJson("users/" + monUid + "/events", "pageSize=60&orderBy=" + encodeURIComponent("t desc"));
+    if (r2.err) msg = r2.err;
+    else {
+      var ds = r2.j.documents || [], ev = [];
+      for (var k = 0; k < ds.length; k++) {
+        var g = ds[k].fields || {};
+        ev.push({ msg: fsStr(g, "msg"), t: fsTs(g, "t") || Date.parse(fsStr(g, "at")) || 0 });
+      }
+      monEvents = ev;
+      var r3 = fsGetJson("users/" + monUid);
+      if (r3.j) { var uf = r3.j.fields || {}; var pj = null; try { pj = JSON.parse(fsStr(uf, "panel")); } catch (e) {}
+        monInfo = { exp: fsTs(uf, "expiresAt"), dev: !!fsStr(uf, "deviceId"), cmd: fsStr(uf, "cmd"), admin: !!(uf.admin && uf.admin.booleanValue === true), panel: pj }; }
+    }
+  }
+  monMsg = msg;
+  if (monw === win) ui.run(function () { try { monRender(); } catch (e) {} });
+}
+function monAct(label, confirmNeeded, writeFn, okMsg) {         // owner controls on one user (rules limit them to expiresAt / deviceId / cmd)
+  if (!monUid) return;
+  if (monInfo && monInfo.admin) { toast("Can't control an owner account"); return; }
+  if (confirmNeeded && !(monArm.l === label && Date.now() - monArm.t < 5000)) { monArm = { l: label, t: Date.now() }; toast("Tap " + label + " again to confirm for " + monName); return; }
+  monArm = { l: "", t: 0 };
+  threads.start(function () {
+    var r = null;
+    try { r = fbCommit([writeFn()]); } catch (e) {}
+    if (r && r.statusCode >= 200 && r.statusCode < 300) { toast(okMsg); try { monFetch(); } catch (e) {} }
+    else toast(r ? "Failed (" + r.statusCode + ") - publish the new rules" : "No connection");
+  });
+}
+function monExtend(days) {
+  var base = Math.max(nowMs(), (monInfo && monInfo.exp) || 0);
+  return fsDoc("users/" + monUid, { expiresAt: { ts: new Date(base + days * 86400000).toISOString() } });
+}
+function monRender() {
+  if (!monw) return;
+  var box = monw.monItems, d = context.getResources().getDisplayMetrics().density, Color = android.graphics.Color;
+  function add(label, color, size, fn, mono) {
+    var tv = new android.widget.TextView(context);
+    tv.setText(label); tv.setTextColor(Color.parseColor(color)); tv.setTextSize(size);
+    tv.setPadding(Math.round(8 * d), Math.round(6 * d), Math.round(8 * d), Math.round(6 * d));
+    if (mono) tv.setTypeface(android.graphics.Typeface.MONOSPACE);
+    if (fn) tv.setOnClickListener(fn);
+    box.addView(tv);
+  }
+  box.removeAllViews();
+  if (!monUid) {
+    var on = 0;
+    for (var i = 0; i < monUsers.length; i++) if (monOnline(monUsers[i])) on++;
+    monw.monTitle.setText("MONITOR  " + on + " online / " + monUsers.length + " users  (drag)");
+    monUsers.forEach(function (u) {
+      var up = monOnline(u);
+      add((up ? "\u25CF " : "\u25CB ") + u.name + (u.admin ? " [owner]" : "") + "\n    " + u.state + "  \u2022  " + agoText(u.seen),
+          up ? "#7CFC9A" : "#8b93a7", 12, function () { monUid = u.uid; monName = u.name; monInfo = null; monEvents = []; monMsg = ""; monw.monItems.removeAllViews(); monw.monTitle.setText("LOG: " + u.name); threads.start(monFetch); });
+    });
+    if (!monUsers.length && !monMsg) add("loading...", "#6f778a", 12);
+  } else {
+    monw.monTitle.setText("LOG: " + monName + "  (drag)");
+    add("\u2190 back to all users", "#6ea8ff", 12, function () { monUid = ""; monInfo = null; monMsg = ""; monw.monItems.removeAllViews(); threads.start(monFetch); });
+    if (monInfo) add("Expires: " + (monInfo.exp ? new Date(monInfo.exp).toLocaleDateString() : "no expiry") + "   Device: " + (monInfo.dev ? "locked" : "free") + (monInfo.cmd ? "   cmd pending: " + monInfo.cmd : ""), "#cfe3ff", 11);
+    function btn(label, color, fn) {
+      var tv = new android.widget.TextView(context);
+      tv.setText(label); tv.setTextColor(Color.WHITE); tv.setTextSize(10); tv.setGravity(android.view.Gravity.CENTER);
+      tv.setBackgroundColor(Color.parseColor(color));
+      tv.setPadding(0, Math.round(9 * d), 0, Math.round(9 * d));
+      tv.setOnClickListener(fn);
+      var lp = new android.widget.LinearLayout.LayoutParams(0, -2, 1); lp.setMargins(Math.round(2 * d), Math.round(2 * d), Math.round(2 * d), Math.round(2 * d));
+      tv.setLayoutParams(lp);
+      return tv;
+    }
+    function row(list) {
+      var h = new android.widget.LinearLayout(context); h.setOrientation(0);
+      list.forEach(function (b) { h.addView(b); });
+      box.addView(h);
+    }
+    row([ btn("STOP", "#7a5a1a", function () { monAct("STOP", false, function () { return fsDoc("users/" + monUid, { cmd: "stop" }); }, "Stop sent (applies within ~2.5 min)"); }),
+          btn("KICK", "#7a2a2a", function () { monAct("KICK", true, function () { return fsDoc("users/" + monUid, { cmd: "kick" }); }, "Kick sent (applies within ~2.5 min)"); }),
+          btn("UNLOCK DEVICE", "#3a4a6b", function () { monAct("UNLOCK DEVICE", true, function () { return { update: { name: FS_DOC + "/users/" + monUid, fields: {} }, updateMask: { fieldPaths: ["deviceId"] } }; }, "Device lock cleared"); }) ]);
+    row([ btn("+7 DAYS", "#2f7d4a", function () { monAct("+7 DAYS", false, function () { return monExtend(7); }, "+7 days added"); }),
+          btn("+30 DAYS", "#2f7d4a", function () { monAct("+30 DAYS", false, function () { return monExtend(30); }, "+30 days added"); }),
+          btn("EXPIRE NOW", "#7a2a2a", function () { monAct("EXPIRE NOW", true, function () { return fsDoc("users/" + monUid, { expiresAt: { ts: new Date(nowMs() - 1000).toISOString() } }); }, "Account expired"); }) ]);
+    if (monInfo && monInfo.panel) {
+      var pn = monInfo.panel, st = pn.set || {}, oo = function (b) { return b ? "ON" : "off"; };
+      add("USER PANEL  v" + pn.v + "  (snapshot " + agoText(pn.at) + ")", "#4fc3e8", 11);
+      add("Status:  " + (pn.run ? "RUNNING" : "IDLE") + "   respawn " + oo(pn.resp) + "   dungeon " + oo(pn.dg) + "   screen capture " + oo(pn.cap) + "\nGame: " + pn.game + "\nPhone: " + pn.dev, "#e8ecf5", 10, null, true);
+      add("Settings:\n x/y " + st.x + "," + st.y + "   dx/dy " + st.dx + "," + st.dy + "\n check " + st.check + "ms   wait " + st.wait + "ms   load wait " + st.openWait + "ms\n veradrix slot " + st.vSlot + "   pkg '" + (st.pkg || "auto") + "'  pkgRA '" + (st.pkgRA || "auto") + "'\n auto fit " + oo(st.autoFit) + "   auto check " + oo(st.autoCheck) + "   console " + oo(st.showConsole) + "\n auto open " + oo(st.autoOpen) + "   auto enter " + oo(st.autoEnter) + "   auto popups " + oo(st.autoPopup), "#e8ecf5", 10, null, true);
+      add("Panel log (last lines):\n" + (pn.log && pn.log.length ? pn.log.join("\n") : "(empty)"), "#9fe6a0", 9, null, true);
+      add("Cloud events:", "#4fc3e8", 11);
+    } else if (monInfo) add("No panel snapshot yet - the user needs script v" + APP_LABEL + " or newer.", "#6f778a", 11);
+    monEvents.forEach(function (e) {
+      var tt = e.t ? new Date(e.t) : null;
+      add((tt ? tt.toLocaleDateString().slice(0, 5) + " " + tt.toLocaleTimeString() : "--") + "\n" + e.msg, "#9fe6a0", 10, null, true);
+    });
+    if (!monEvents.length && !monMsg) add("no events yet (only high-level events are sent)", "#6f778a", 11);
+  }
+  if (monMsg) add(monMsg, "#ff8a80", 11);
+  try { monw.monSub.setText("auto-refresh 10s \u2022 updated " + new Date().toLocaleTimeString()); } catch (e) {}
+}
+function openMon() {
+  monUid = ""; monName = ""; monMsg = ""; monUsers = []; monEvents = [];
+  monw = floaty.window(sc(
+    '<vertical w="320" bg="#F2111722" padding="4">' +
+      '<horizontal gravity="center_vertical">' +
+        '<text id="monTitle" text="MONITOR (drag here)" textColor="#4fc3e8" textSize="12sp" textStyle="bold" layout_weight="1" padding="6"/>' +
+        '<text id="monRef" text="\u27F3" textColor="#ffffff" textSize="16sp" textStyle="bold" padding="8"/>' +
+        '<text id="monClose" text="\u2715" textColor="#ffffff" textSize="16sp" textStyle="bold" padding="8"/>' +
+      '</horizontal>' +
+      '<ScrollView h="400" bg="#0b0e13" marginTop="2"><vertical id="monItems"/></ScrollView>' +
+      '<text id="monSub" text="" textColor="#6f778a" textSize="9sp" padding="4"/>' +
+    '</vertical>'
+  ));
+  var win = monw;
+  win.setPosition(30, 100);
+  try { win.disableFocus(); } catch (e) {}
+  var mx0, my0, mwx, mwy;
+  win.monTitle.setOnTouchListener(function (view, event) {
+    switch (event.getAction()) {
+      case 0: mx0 = event.getRawX(); my0 = event.getRawY(); mwx = win.getX(); mwy = win.getY(); return true;
+      case 2: win.setPosition(mwx + (event.getRawX() - mx0), mwy + (event.getRawY() - my0)); return true;
+    }
+    return true;
+  });
+  win.monClose.on("click", closeMon);
+  win.monRef.on("click", function () { toast("Refreshing..."); threads.start(function () { try { monFetch(); } catch (e) {} }); });
+  monRender();
+  threads.start(function () {                               // fetch now, then every 10 s while this popup is open
+    while (monw === win && fbAuth) {
+      try { monFetch(); } catch (e) { log("monitor err: " + e); }
+      for (var i = 0; i < 10 && monw === win; i++) sleep(1000);
+    }
+  });
+}
+V("btnMonitor").on("click", function () {
+  if (!acctAdmin) { toast("Owner only"); return; }
+  if (monw) { closeMon(); return; }                         // button toggles the popup
+  releaseFocus();
+  openMon();
+});
+
 // ===== OWNER: FILE PICKER (fills "File on this phone") =====
 var fpw = null, fpDir = "/sdcard";
 function closeFp() { if (fpw) { try { fpw.close(); } catch (e) {} fpw = null; } }
@@ -4235,13 +4574,15 @@ function applyLock(lock) {
       V("iuser").setText("");
       V("ilock2").setText(""); V("icode").setText("");
       regMode = false;
-      acctAdmin = false; V("ghtok").setText(""); V("ghOut").setText(""); V("keyPanel").setVisibility(View.GONE); V("keyOut").setText(""); closeDg(); closeDaily(); closeFp();
+      acctAdmin = false; V("btnRelease").setVisibility(View.GONE); V("btnMonitor").setVisibility(View.GONE); relArm = 0; V("ghtok").setText(""); V("ghOut").setText(""); V("keyPanel").setVisibility(View.GONE); V("keyOut").setText(""); closeDg(); closeDaily(); closeFp(); closeMon();
       renderLock();
       fillSaved();
       releaseFocus();
     } else {
       var showPanel = fbOn() && acctAdmin;
       V("keyPanel").setVisibility(showPanel ? View.VISIBLE : View.GONE);
+      V("btnRelease").setVisibility(showPanel ? View.VISIBLE : View.GONE);
+      V("btnMonitor").setVisibility(showPanel ? View.VISIBLE : View.GONE);
       if (showPanel) { try { ghFill(); } catch (e) {} }
       try { V("sAutoLogin").setVisibility(acctAdmin ? View.VISIBLE : View.GONE); if (!acctAdmin) V("sAutoLogin").setChecked(false); } catch (e) {}
       if (showPanel) { if (!String(V("kdays").getText())) V("kdays").setText("30"); if (!String(V("kcount").getText())) V("kcount").setText("1"); if (!String(V("kprefix").getText())) V("kprefix").setText("CABAL"); if (!String(V("kusers").getText())) V("kusers").setText("10"); }

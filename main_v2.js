@@ -19,8 +19,8 @@
 //  Admin can also set/clear users/<uid>.expiresAt (timestamp) in the console at any time.
 //  IP LOCK: only FB.maxPerIp accounts can be created from one public IP (stored hashed in Firestore "ips").
 
-var APP_VERSION = 24;         // bump this on every release you publish (see AUTO UPDATE below) - must stay a whole number
-var APP_LABEL = "11.4";         // what the panel shows; the updater compares APP_VERSION only
+var APP_VERSION = 29;         // bump this on every release you publish (see AUTO UPDATE below) - must stay a whole number
+var APP_LABEL = "11.9";         // what the panel shows; the updater compares APP_VERSION only
 var GW = 2093, GH = 1177;
 var store = storages.create("cabal_respawn_redfinger");
 
@@ -470,7 +470,7 @@ function checkUpdate(manual) {                    // manual = the UPDATE SCRIPT 
   finally { updBusy = false; }
 }
 var liveUntil = 0, livePushAt = 0;
-var CTRL_IDS = ["fb", "btnVera", "btnResp", "btnDG", "btnNA", "btnNARec", "btnGame", "sFit", "sAuto", "sConsole", "sOpen", "sEnter", "sPopup"];   // the only widgets the owner can press remotely
+var CTRL_IDS = ["fb", "btnVera", "btnResp", "btnDG", "btnGame", "sFit", "sAuto", "sConsole", "sOpen", "sEnter", "sPopup"];   // the only widgets the owner can press remotely
 function ownerCmd(a) {                  // run a command the owner left on this account; true = the user was logged out (end the loop)
   if (!a || a.admin) return false;
   var c = a.cmd || "";
@@ -649,26 +649,16 @@ var w = floaty.window(sc(
       '<text text="VERADRIX QUICK SLOT (1-8, left to right)" textColor="#6ea8ff" textSize="10sp" textStyle="bold" marginTop="4"/>' +
       '<input id="ivslot" inputType="number" textColor="#ffffff" textSize="14sp" padding="4"/>' +
       '<text id="btnResp" text="RESPAWN: OFF" textColor="#ffffff" textSize="12sp" textStyle="bold" gravity="center" bg="#3a4152" padding="8" marginTop="4"/>' +
-      '<text id="btnDG" text="DAILY DG: OFF" textColor="#ffffff" textSize="12sp" textStyle="bold" gravity="center" bg="#3a4152" padding="8" marginTop="4"/>' +
-      // ---- AUTO DG for players without premium: shown for every user, in both games ----
-      '<vertical id="naBox" bg="#33260f" padding="4" marginTop="4">' +
-        '<text text="AUTO DG - NON PREMIUM USER" textColor="#e0b84a" textSize="10sp" textStyle="bold"/>' +
-        '<text text="Stand at the dungeon gate, open Select Dungeon once and pick the dungeon. Presses AUTO attack, taps the quest text to walk to each quest. Runs: 0 = until no entries are left." textColor="#a8a08a" textSize="9sp"/>' +
-        '<horizontal gravity="center_vertical">' +
-          '<text text="Runs" textColor="#e8ecf5" textSize="11sp" layout_weight="1"/>' +
-          '<input id="inaruns" inputType="number" textColor="#ffffff" textSize="14sp" padding="4" w="70"/>' +
-        '</horizontal>' +
-        '<horizontal gravity="center_vertical">' +
-          '<text text="Dungeon name (empty = auto detect)" textColor="#e8ecf5" textSize="11sp" layout_weight="1"/>' +
-          '<input id="inaname" inputType="text" textColor="#ffffff" textSize="12sp" padding="4" w="110"/>' +
-        '</horizontal>' +
-        '<text id="btnNARec" text="DG RECORD: ON" textColor="#ffffff" textSize="12sp" textStyle="bold" gravity="center" bg="#2f7d4a" padding="6" marginTop="2"/>' +
-        '<text id="naRec" text="DG RECORD: -" textColor="#9fe6a0" textSize="9sp" marginTop="2"/>' +
-        '<horizontal marginTop="2">' +
-          '<text id="btnNAExp" text="EXPORT DG PROFILES" textColor="#ffffff" textSize="10sp" textStyle="bold" gravity="center" bg="#3a4a7a" padding="6" layout_weight="1"/>' +
-          '<text id="btnNAImp" text="IMPORT DG PROFILES" textColor="#ffffff" textSize="10sp" textStyle="bold" gravity="center" bg="#3a4a7a" padding="6" layout_weight="1" marginLeft="4"/>' +
-        '</horizontal>' +
-        '<text id="btnNA" text="AUTO DUNGEON RUN: OFF" textColor="#ffffff" textSize="12sp" textStyle="bold" gravity="center" bg="#8a5a1a" padding="8" marginTop="2"/>' +
+      // ---- 1) DAILY DG - premium (bag items / Item Entrance). Own command, own popup ----
+      '<vertical id="dailyBox" bg="#1f2a3a" padding="4" marginTop="4">' +
+        '<text text="1. DAILY DG - PREMIUM" textColor="#6ea8ff" textSize="10sp" textStyle="bold"/>' +
+        '<text id="btnDG" text="DAILY DG: OFF" textColor="#ffffff" textSize="12sp" textStyle="bold" gravity="center" bg="#3a4152" padding="8" marginTop="2"/>' +
+        '<text id="btnDaily" text="OPEN DAILY DG LIST" textColor="#ffffff" textSize="11sp" textStyle="bold" gravity="center" bg="#7a5a1a" padding="8" marginTop="2"/>' +
+      '</vertical>' +
+      '<vertical id="npBox" bg="#2a2433" padding="4" marginTop="4">' +
+        '<text text="2. NON PREM DG" textColor="#c79bff" textSize="10sp" textStyle="bold"/>' +
+        '<text id="btnNP" text="NON PREM DG: OFF" textColor="#ffffff" textSize="12sp" textStyle="bold" gravity="center" bg="#3a4152" padding="8" marginTop="2"/>' +
+        '<text id="btnNPList" text="OPEN NON PREM DG LIST" textColor="#ffffff" textSize="11sp" textStyle="bold" gravity="center" bg="#5a3a8a" padding="8" marginTop="2"/>' +
       '</vertical>' +
       '<Switch id="sAuto" text="Tap AUTO only if off" textColor="#e8ecf5" textSize="12sp" padding="2"/>' +
       '<Switch id="sConsole" text="Show console" textColor="#e8ecf5" textSize="12sp" padding="2"/>' +
@@ -725,7 +715,6 @@ var w = floaty.window(sc(
       '</horizontal>' +
       '<horizontal marginTop="4">' +
         '<button id="btnDg" text="DG LIST" layout_weight="1" h="36" bg="#4a3a8a" textColor="#ffffff" textSize="11sp" padding="0"/>' +
-        '<button id="btnDaily" text="DAILY DG" layout_weight="1" h="36" bg="#7a5a1a" textColor="#ffffff" textSize="11sp" padding="0" marginLeft="4"/>' +
       '</horizontal>' +
     '</vertical></ScrollView>' +
   '</vertical>'
@@ -939,7 +928,7 @@ function respSync() {
 function respAlive() { return !!(rWorker && rWorker.isAlive()); }
 function startRespawn() {
   if (respAlive()) return;
-  if (dgBusy) { toast("Daily DG is running - stop it first"); return; }
+  if (dgBusy) { toast(dgWho() + " is running - stop it first"); return; }
   releaseFocus();
   C = readInputs();
   saveCfg(C);
@@ -1329,8 +1318,9 @@ function map(p) {
     else cx = v.x + v.w / 2 + (p[0] - GW / 2) * sv;                // centred UI
     return [Math.round(cx), Math.round(v.y + v.h / 2 + (p[1] - GH / 2) * sv)];
   }
-  var s = H / GH;
-  return [Math.round(H - p[1] * s), Math.round(W / 2 + (p[0] - GW / 2) * s)];
+  var s = H / GH, an = p[2];                         // portrait screen = game rotated 90deg clockwise: game x -> screen y, game y -> screen x (mirrored)
+  var py = an === "R" ? W - (GW - p[0]) * s : (an === "L" ? p[0] * s : W / 2 + (p[0] - GW / 2) * s);   // edge-anchored UI keeps its edge, like the landscape branch
+  return [Math.round(H - p[1] * s), Math.round(py)];
 }
 function pix(img, p) {
   var m = map(p);
@@ -2124,14 +2114,21 @@ function findHighlight(img) {
   return [Math.round((x0 + x1) / 2), Math.round((y0 + y1) / 2)];
 }
 // returns { state: "hot" | "daily" | "", hl: [x,y] | null }
+var popupLast = { hot: 0, dark: 0 };             // last measured values (shown in the log when no popup is found)
 function popupState() {
   var img = grab();
   if (!img) return { state: "", hl: null };
   var res = { state: "", hl: null };
-  if (fracIn(img, R_HOT, isHotBlue, 8) > 0.25) res.state = "hot";
-  else if (fracIn(img, R_DAILY, isDarkPanel, 8) > 0.6) {
-    var hl = findHighlight(img);
-    if (hl) { res.state = "daily"; res.hl = hl; }
+  var fh = fracIn(img, R_HOT, isHotBlue, 8);
+  popupLast.hot = fh;
+  if (fh > 0.25) res.state = "hot";
+  else {
+    var fd = fracIn(img, R_DAILY, isDarkPanel, 8);
+    popupLast.dark = fd;
+    if (fd > 0.6) {
+      var hl = findHighlight(img);
+      if (hl) { res.state = "daily"; res.hl = hl; }
+    }
   }
   img.recycle();
   return res;
@@ -2172,6 +2169,7 @@ function waitPopups(ms) {
     if (handlePopups()) { rounds++; t0 = Date.now(); limit = 6000; }   // closed one: wait a little for the next
     else sleep(1500);
   }
+  if (rounds === 0) log("popups: none seen (Hot Item blue " + popupLast.hot.toFixed(2) + " of 0.25 needed, Daily panel " + popupLast.dark.toFixed(2) + " of 0.60 needed)");
 }
 function handlePopups() {
   if (!C.autoPopup) return false;
@@ -2214,7 +2212,7 @@ function runEngine(testOnly, loginOnly) {
   }
   if (entered) { try { refitView(); } catch (e) {} sleep(Math.max(C.wait, 10000)); }
   if (!testOnly) {
-    if (entered) waitPopups(15000); else handlePopups();
+    if (entered) waitPopups(15000); else waitPopups(loginOnly ? 12000 : 3000);   // play button on a game that is already in the world: Hot Item can still show up a few seconds later
     if (entered) afterRelog();     // we just logged in -> go to the saved spot
     else ensureAuto();             // activated in-game: tap AUTO once (only if it is off)
   }
@@ -2271,7 +2269,7 @@ function runEngine(testOnly, loginOnly) {
       if (C.autoFit && (VIEW_OK ? loopN % 300 === 0 : loopN % 20 === 0)) needFit = true;   // re-detect (retry if unsure)
       // inside the game ONLY a death is handled: respawn -> return to spot -> AUTO
       // (no entry-screen taps, no popup taps, no extra AUTO taps while playing)
-      if (C.autoPopup && loopN % 5 === 0 && popupState().state === "hot") closeHotItem();   // Hot Item can pop up at any time
+      if (C.autoPopup && loopN % 3 === 0 && popupState().state === "hot") closeHotItem();   // Hot Item can pop up at any time
       // deaths are handled by the separate RESPAWN script (RESPAWN button), not by the play engine
       if (C.autoCheck) watchAuto();                      // AUTO attack went off -> switch it on again right away
     } catch (e) {
@@ -2286,7 +2284,7 @@ function runEngine(testOnly, loginOnly) {
 var keepRun = false;                     // true = the user wants it running; only STOP (or logout/expiry) clears it
 function startEngine(testOnly, loginOnly) {
   if (worker && worker.isAlive()) { log("already busy"); return; }
-  if (dgBusy) { log("daily dg is running - stop it first"); toast("Daily DG is running - stop it first"); return; }
+  if (dgBusy) { log(dgWho() + " is running - stop it first"); toast(dgWho() + " is running - stop it first"); return; }
   releaseFocus();
   C = readInputs();
   saveCfg(C);
@@ -2361,10 +2359,6 @@ function gameSync() {
       V("gameTag").setBackgroundColor(android.graphics.Color.parseColor(isRA() ? "#8a5a1a" : "#2f5fb3"));
       V("rootP").setBackgroundColor(android.graphics.Color.parseColor(isRA() ? "#F2241a0e" : "#F2111722"));   // whole panel gets a warm tint in RA
       V("gameTag").setVisibility(V("hdr").getVisibility());   // follows the header: hidden while logged out
-      V("naBox").setVisibility(android.view.View.VISIBLE);   // AUTO DG - NON PREMIUM is for every user / both games
-      V("inaruns").setText(String(store.get("na_runs", 0)));
-      V("inaname").setText(String(store.get("na_name", "")));
-      try { V("btnNARec").setText(naRecOn ? "DG RECORD: ON" : "DG RECORD: OFF"); V("btnNARec").setBackgroundColor(android.graphics.Color.parseColor(naRecOn ? "#2f7d4a" : "#3a4152")); V("naRec").setText(naRecText()); } catch (er) {}
       V("ipkg").setText(String((isRA() ? C.pkgRA : C.pkg) || ""));
     } catch (e) {}
   });
@@ -2380,14 +2374,16 @@ V("btnGame").on("click", function () {
   log("game: " + gameName());
 });   // own script: independent of the play button
 V("btnDG").on("click", function () {
-  if (dgBusy || dgPending || dgArmed) {                        // ON -> OFF: stop / disarm
+  if (naOn) { toast(dgWho() + " is running - stop it with its own button first"); return; }   // DAILY DG never stops / starts over a non-prem run
+  if (dgBusy || dgPending) {                                   // ON -> OFF: stop (a stale "armed" flag with nothing running no longer eats the tap)
     dgCancel = !!dgBusy; dgTried = {}; dgForce = {}; dgPending = false; dgGoAt = 0; dgArmed = false;
     toast("Daily DG OFF");
   } else {                                                     // OFF -> ON
     dgArmed = true;                                            // button turns ON right away
     try { dgSelLoadIfEmpty(); } catch (el) {}                  // saved ON dungeons come back
+    if (!dgNextSel() && dgSelCount() > 0) { dgForceSelected(); }   // all ON dungeons are marked done today: START press runs them again anyway
     if (dgNextSel()) { dgRunQueue(); toast("Daily DG ON"); }   // dungeons already switched ON in the list: start them
-    else { toast("Daily DG ON - switch the dungeons you want ON"); if (!dpw) openDaily(); }   // otherwise open the list to pick
+    else { dgArmed = false; toast("Switch the dungeons you want ON, then press START DG"); if (!dpw) openDaily(); }   // nothing ON: open the list (button stays OFF, nothing is pending)
   }
   dgBtnSync();
 });
@@ -2487,6 +2483,7 @@ function quitAll() {
   try { closeFp(); } catch (e) {}
   try { closeDg(); } catch (e) {}
   try { closeDaily(); } catch (e) {}
+  try { closeNp(); } catch (e) {}
   try { closeHelp(); } catch (e) {}
   try { threads.start(function () { fbSignOut(who); }).join(3000); } catch (e) {}
   stopEngine();
@@ -2971,8 +2968,6 @@ var HELP_STEPS = [
   { t: "7. Dungeons",
     b: "DAILY DG\n" +
        "Open the game's Dungeon screen, tap DAILY DG, switch ON the dungeons you want (or press RUN beside one), then use the DAILY DG: ON button.\n\n" +
-       "AUTO DG - NON PREMIUM\n" +
-       "Stand at the dungeon gate, open Select Dungeon once and pick the dungeon. Set Runs (0 = until no entries are left), then tap AUTO DUNGEON RUN: ON.\n\n" +
        "DG LIST shows all dungeons; tap an entry to copy its name." },
   { t: "8. Tips",
     b: "- The LOG shows everything the script does; tap clear to empty it.\n" +
@@ -3155,7 +3150,7 @@ function dgLearnCell(it) {
       '<text id="lcMsg" text="" textColor="#ffffff" textSize="14sp" textStyle="bold" bg="#CC111722" gravity="center" padding="10" w="*" h="wrap_content"/>' +
     '</frame>');
   try { cellWin.setSize(-1, -1); } catch (e) {}
-  cellWin.lcMsg.setText("Bag tab VII must be open.\nTap the " + it.sub + " item now  (tap this bar to cancel)");
+  cellWin.lcMsg.setText("Open the bag tab that holds the item.\nTap the " + it.sub + " item now  (tap this bar to cancel)");
   function done() { var cw = cellWin; cellWin = null; try { cw.close(); } catch (e) {} ui.run(function () { try { openDaily(); } catch (e) {} }); }
   cellWin.lcRoot.setOnTouchListener(function (view, ev) {
     if (ev.getAction() !== 0) return true;
@@ -3174,6 +3169,71 @@ function dgLearnCell(it) {
 }
 
 var P_DG_ROW_X = 498, P_DG_REPEAT = [1011, 1100], P_DG_ITEM = [1846, 1100], P_DG_CHALLENGE = [816, 880];
+var NA_AUTO_B64 = "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";   // the small dungeon AUTO button (64x64, cut from a portrait capture, game rotated 90deg clockwise)
+var dgAutoBase = null, dgAutoCache = {};
+function dgAutoTplFor(rot, k) {                   // template for this screen orientation + scale (cached)
+  var key = rot + "|" + k.toFixed(3);
+  if (dgAutoCache[key] !== undefined) return dgAutoCache[key];
+  var t = null;
+  try {
+    if (!dgAutoBase) dgAutoBase = images.fromBase64(NA_AUTO_B64);
+    t = dgAutoBase;
+    if (rot) t = images.rotate(t, rot);
+    if (Math.abs(k - 1) > 0.02) t = images.scale(t, k, k);
+  } catch (e) { log("dg auto template err: " + e); t = null; }
+  dgAutoCache[key] = t;
+  return t;
+}
+function dgAutoFind(img) {                        // the AUTO button by picture: centre in screen px, or null
+  var iw = img.getWidth(), ih = img.getHeight(), k0 = Math.min(iw, ih) / 1097;
+  var rots = ih > iw ? [0, 270] : [270, 0];       // portrait capture = template as cut; landscape capture = turned upright
+  var ks = [1, 0.9, 1.1, 0.8, 1.25];
+  for (var ri = 0; ri < rots.length; ri++) {
+    for (var ki = 0; ki < ks.length; ki++) {
+      var t = dgAutoTplFor(rots[ri], k0 * ks[ki]);
+      if (!t) continue;
+      var p = null;
+      try { p = images.findImage(img, t, { threshold: 0.8 }); } catch (e) {}
+      if (p) return { x: p.x + t.getWidth() / 2, y: p.y + t.getHeight() / 2 };
+    }
+  }
+  return null;
+}
+function dgTapAuto() {                            // press the small AUTO button next to the Dungeon quest panel
+  var p = null;
+  for (var k = 0; k < 4 && !p; k++) {
+    var im = grab();
+    if (im) { try { p = dgAutoFind(im); } catch (e) { log("dg auto find err: " + e); } im.recycle(); }
+    if (!p) { sleep(600); dgChk(); }
+  }
+  if (p) {
+    log("dg auto: AUTO button found by picture at " + Math.round(p.x) + "," + Math.round(p.y));
+    try { recTap(P_DG_AUTO, "dg auto run"); } catch (er) {}
+    METHODS[method](Math.round(p.x), Math.round(p.y));
+    return true;
+  }
+  if (LAND) { log("dg auto: AUTO button not found by picture - tapping its fixed spot"); tapGame(P_DG_AUTO, "dg auto run"); return true; }
+  log("dg auto: AUTO button not found - no tap (a fixed spot could hit the boot button)");
+  toast("AUTO button not found");
+  return false;
+}
+var P_NP_AUTO = [1766, 1021, "R"];
+var NP_AUTO_ON_FRAC = 0.03;                      // share of gold pixels on the button: ON looked ~0.04-0.11, OFF 0.00 (from your two screenshots)
+function npAutoFrac() {                             // share of gold/orange pixels on the round AUTO button (the arrows + rim glow when AUTO is ON); -1 = unreadable
+  try {
+    var im = grab(); if (!im) return -1;
+    var warm = 0, n = 0;
+    for (var dy = -42; dy <= 42; dy += 4) for (var dx = -42; dx <= 42; dx += 4) {
+      if (dx * dx + dy * dy > 42 * 42) continue;
+      var c = pix(im, [P_NP_AUTO[0] + dx, P_NP_AUTO[1] + dy, "R"]);
+      var r = colors.red(c), g = colors.green(c), bl = colors.blue(c);
+      n++; if (r > 150 && r > bl + 70 && g > bl + 30) warm++;
+    }
+    im.recycle();
+    return n ? warm / n : -1;
+  } catch (e) { return -1; }
+}
+function npAutoOn() { var f = npAutoFrac(); return f < 0 ? null : f >= NP_AUTO_ON_FRAC; }   // true / false / null (cannot tell)
 var P_DG_AUTO = [1545, 337, "R"];              // in-dungeon AUTO button (right of the Dungeon info panel; "R" = anchored to the right edge)
 var DG_END_ABSENT = 20000;                      // ms without the dungeon timer = dungeon finished (back in town)
 var DG_MAX_RUN = 90 * 60000;                    // give up waiting for one dungeon after 90 min
@@ -3267,7 +3327,7 @@ function dqWatch(img) {                          // img = fresh screenshot taken
   // Inside the dungeon the boot keeps being tapped the whole time, and only attacking / questing (hold above) pauses it.
   if (now - dqLastTap >= DQ_TAP_EVERY) {                       // continuous tapping while walking
     dqLastTap = now;
-    tapGame(naOn ? P_NA_QUEST : P.boot, naOn ? "quest panel tap" : "quest boot");   // AUTO DG (RA): tap the quest text like a manual tap
+    tapGame(naOn ? P_NA_QUEST : P.boot, naOn ? "quest panel tap" : "quest boot");   // AUTO DG + NON PREM DG: tap the quest text like a manual tap (DAILY DG keeps the boot button)
     tapped = true;
     naEvAdd("tap");
   }
@@ -3340,7 +3400,8 @@ function isBtnGrey(c) {         // greyed-out button (no entry item): flat grey-
   return r > 55 && r < 100 && g > 60 && g < 108 && b > 68 && b < 118 && (b - r) < 26 && (b - r) > 4;
 }
 function dgOnSelect(img) {     // true when the Select Dungeon screen is showing (blue "200 enter" / Item Entrance, or Item Entrance greyed)
-  return fracIn(img, R_DG_ENTER, isBtnBlue, 4) > 0.5 || fracIn(img, R_DG_ITEM, isBtnBlue, 4) > 0.5 || (fracIn(img, R_DG_ITEM, isBtnGrey, 4) > 0.6 && fracIn(img, R_DG_ENTER, isBtnGrey, 4) > 0.5);   // both buttons grey = Dungeon window with no entry possible
+  try { if (dgInfoPanel(img)) return false; } catch (e) {}   // the item info panel (Move) is open: never the Select Dungeon screen (the blue AUTO button area gave a false match)
+  return fracIn(img, R_DG_ENTER, isBtnBlue, 4) > 0.5 || (fracIn(img, R_DG_ITEM, isBtnBlue, 4) > 0.5 && (fracIn(img, R_DG_ENTER, isBtnBlue, 4) > 0.3 || fracIn(img, R_DG_ENTER, isBtnGrey, 4) > 0.3)) || (fracIn(img, R_DG_ITEM, isBtnGrey, 4) > 0.6 && fracIn(img, R_DG_ENTER, isBtnGrey, 4) > 0.5);   // both buttons grey = Dungeon window with no entry possible
 }
 var P_DG_WIN_CLOSE = [2017, 64, "R"];            // X of the full-screen Dungeon window (top right)
 function dgCloseSelect() {                       // leave the Dungeon window so the next step starts from the town screen
@@ -3447,8 +3508,28 @@ function dgAfterChallenge(it) {
   }
   log(seen ? "DAILY DG: dungeon loaded" : "DAILY DG: timer not seen, pressing AUTO anyway");
   sleep(1500); dgChk();
-  tapGame(P_DG_AUTO, "dg auto run");
-  log("DAILY DG: entered " + it.name + " + auto run");
+  if (naOn && naMode === "list") {                // NON PREM DG: tap the AUTO below the attack button (not the small one at the top right)
+    var npF0 = npAutoFrac(), npS0 = npF0 < 0 ? null : npF0 >= NP_AUTO_ON_FRAC;
+    if (npS0 === true) {
+      log("NON PREM DG: AUTO already ON (gold " + npF0.toFixed(3) + ") - no tap");
+    } else {
+      tapGame(P_NP_AUTO, "non prem dg: AUTO (below the attack button)");
+      sleep(800); dgChk();
+      var npF1 = npAutoFrac();
+      if (npS0 === false && npF1 >= 0 && npF1 < NP_AUTO_ON_FRAC) {      // was OFF, still OFF after the tap: the tap missed - one retry
+        log("NON PREM DG: AUTO still OFF after tap (gold " + npF1.toFixed(3) + ") - tapping once more");
+        tapGame(P_NP_AUTO, "non prem dg: AUTO retry");
+        sleep(800); dgChk();
+        npF1 = npAutoFrac();
+      }
+      log("NON PREM DG: AUTO gold " + (npF0 < 0 ? "?" : npF0.toFixed(3)) + " -> " + (npF1 < 0 ? "?" : npF1.toFixed(3)) + (npS0 === null ? " (state unreadable: tapped once)" : ""));
+    }
+    log("NON PREM DG: entered " + it.name + " + AUTO step done -> quest panel taps start");
+    try { dqKick(); } catch (ekq) {}                // AUTO is on: now walk to the first dungeon quest (boot button), dgWaitFinish keeps it going
+  } else {
+    dgTapAuto();
+    log("DAILY DG: entered " + it.name + " + auto run");
+  }
   toast("Started: " + it.name);
   return true;
 }
@@ -3465,11 +3546,10 @@ function dgWaitFinish() {
     if (has) { try { dqWatch(im); } catch (eq) {} } else dqReset();     // dungeon only: another quest -> boot button
     im.recycle();
     if (has) {
-      if (!seen && dgCur) { try { store.put("dg_done_" + dgCur, dayKey()); } catch (e) {} }   // dungeon really started -> done today
       if (!seen) { try { DBG.dgMark("ENTERED", "dungeon timer seen"); } catch (e) {} }
       seen = true; absentSince = 0;
     }
-    else if (seen) { if (!absentSince) absentSince = Date.now(); if (Date.now() - absentSince >= DG_END_ABSENT) { try { if (!naOn) dqAfterEnd(); } catch (ea) { if (String(ea) === "cancelled") throw ea; } return true; } }
+    else if (seen) { if (!absentSince) absentSince = Date.now(); if (Date.now() - absentSince >= DG_END_ABSENT) { if (dgCur && !naOn) { try { store.put("dg_done_" + dgCur, dayKey()); } catch (e) {} } try { if (!naOn) dqAfterEnd(); } catch (ea) { if (String(ea) === "cancelled") throw ea; } return true; } }
     else if (Date.now() - t0 > 60000) { log("DAILY DG: dungeon timer never appeared (the entry tap was not detected) - skipping to the next dungeon"); return "skip"; }
   }
   log("DAILY DG: still running after " + Math.round(cap / 60000) + " min - queue stopped");
@@ -3487,6 +3567,7 @@ function dgBtnSync() {      // keeps the main-panel DAILY DG button in step with
   } catch (e) {}
 }
 setInterval(dgBtnSync, 1000);
+function dgForceSelected() { DAILY_LIST.forEach(function (it) { if (dgSel[it.name]) dgForce[it.name] = true; }); }
 function dgNextSel() {      // first dungeon (in list order) that is switched ON; with AUTO NEXT, then the first one not done today
   var i;
   for (i = 0; i < DAILY_LIST.length; i++) { var nm = DAILY_LIST[i].name; if (dgSel[nm] && !dgTried[nm] && (!dgDone(nm) || dgForce[nm])) return DAILY_LIST[i]; }   // ON stays ON; done-today ones are skipped
@@ -3581,38 +3662,153 @@ function bagFind(img, key) {          // first cell (row by row) whose icon is `
   return null;
 }
 function dgBagClose() { try { tapGame(P_BAG_CLOSE, "DAILY DG: close bag"); } catch (e) {} sleep(800); }
+// ---- MOVE button (item info panel): find the blue button near P_MAP_MOVE instead of trusting one fixed point, verify, retry ----
+var R_MOVE_SEARCH = [P_MAP_MOVE[0] - 260, P_MAP_MOVE[1] - 90, P_MAP_MOVE[0] + 260, P_MAP_MOVE[1] + 90];   // same "R" anchored space as P_MAP_MOVE
+function dgMoveFrac(img) { return fracIn(img, R_MOVE_SEARCH, isBtnBlue, 4, "R"); }
+function dgMoveTarget(img) {          // centre of the blue button nearest to P_MAP_MOVE; null when no blue button is in the search box
+  var r = R_MOVE_SEARCH, best = null, bd = 1e12, x, y, c, d;
+  for (y = r[1]; y < r[3]; y += 4) for (x = r[0]; x < r[2]; x += 4) {
+    if (!isBtnBlue(pix(img, [x, y, "R"]))) continue;
+    d = (x - P_MAP_MOVE[0]) * (x - P_MAP_MOVE[0]) + (y - P_MAP_MOVE[1]) * (y - P_MAP_MOVE[1]);
+    if (d < bd) { bd = d; best = [x, y]; }
+  }
+  if (!best) return null;
+  var sx = 0, sy = 0, n = 0;
+  for (y = best[1] - 40; y <= best[1] + 40; y += 4) for (x = best[0] - 90; x <= best[0] + 90; x += 4) {
+    if (x < r[0] || x >= r[2] || y < r[1] || y >= r[3]) continue;
+    if (isBtnBlue(pix(img, [x, y, "R"]))) { sx += x; sy += y; n++; }
+  }
+  return n >= 30 ? [Math.round(sx / n), Math.round(sy / n), "R"] : null;
+}
+function dgShot(tag) {                // saves the game screen next to dg_runs.csv so the MOVE position can be checked
+  try { var im = grab(); if (!im) return; var f = String(DBG.dir) + "/move_" + tag + ".png"; images.save(im, f); im.recycle(); log("DAILY DG: screenshot saved " + f); } catch (e) { log("screenshot err: " + e); }
+}
+var R_MOVE_TXT = [817, 890, 912, 930];   // "R" anchored: the white word "Move" on the dark Move button of the item info panel
+function dgInfoPanel(img) { return fracIn(img, R_MOVE_TXT, isTitleWhite, 3, "R") > 0.05; }   // true while the item info panel (Move / Upgrade) is open
+function dgPressMove(it) {            // true = MOVE worked (warp dialog confirmed / info panel closed); "blind" = tapped once, cannot verify; false = no effect
+  var offs = [[0, 0], [0, -10], [0, 10], [-30, 0], [30, 0]], a, wq;
+  for (a = 0; a < offs.length; a++) {
+    var img = grab(), panel = false, closed = false;
+    if (img) { panel = dgInfoPanel(img); img.recycle(); }
+    if (a === 0) dgShot("before");
+    log("DAILY DG: MOVE try " + (a + 1) + " - info panel " + (panel ? "visible" : "NOT detected"));
+    tapGame([P_MAP_MOVE[0] + offs[a][0], P_MAP_MOVE[1] + offs[a][1], "R"], "DAILY DG: MOVE to " + it.name + " gate");
+    for (wq = 0; wq < 8; wq++) {
+      sleep(500); dgChk();
+      var iw = grab();
+      if (!iw) continue;
+      var warp = fracIn(iw, R_WARP_OK, isBtnBlue, 4) > 0.5, still = dgInfoPanel(iw);
+      iw.recycle();
+      if (warp) { tapGame(P_WARP_OK, "DAILY DG: warp Confirmation"); return true; }
+      if (panel && !still) closed = true;                                 // the info panel closed: the move started - but keep looking for the Warp dialog a little longer
+    }
+    if (closed) return true;
+    if (!panel) return "blind";       // cannot verify: one tap only (more taps could hit the town ground and walk away)
+    log("DAILY DG: MOVE tap " + (a + 1) + " had no effect" + (a < offs.length - 1 ? " - nudging and trying again" : ""));
+  }
+  dgShot("after_fail");
+  return false;
+}
+// ===== ALL BAG TABS: find the dungeon item in tab I..VII (not only VII) =====
+var BAG_TAB_COUNT = 7, BAG_TAB_STEP = 112;          // tabs I..VII run down the left edge of the Inventory window; VII = P_BAG_TAB7, 112 game px between tabs
+function bagTabPoint(t) { return [P_BAG_TAB7[0], P_BAG_TAB7[1] - (BAG_TAB_COUNT - t) * BAG_TAB_STEP, "R"]; }
+function romanTab(t) { return ["", "I", "II", "III", "IV", "V", "VI", "VII"][t] || String(t); }
+function bagCellFilled(img, row, col) {             // false for an empty bag slot
+  var h = bagHist(img, BAG_X0 + (col - 1) * BAG_CELL, BAG_Y0 + (row - 1) * BAG_CELL);
+  return bagDist(h, BAG_TPL.empty) > 0.5;
+}
+function dgKey(it) { return "L:" + it.name; }
+(function () {                                      // learned: which tab each dungeon item was found in + its icon fingerprint(s)
+  try {
+    var tb = JSON.parse(store.get("dg_tabs", "{}")) || {}, fp = JSON.parse(store.get("dg_fp", "{}")) || {};
+    DAILY_LIST.forEach(function (it) {
+      if (tb[it.name] >= 1 && tb[it.name] <= BAG_TAB_COUNT) it.tab = tb[it.name];
+      if (fp[it.name] && fp[it.name].length) BAG_TPL[dgKey(it)] = fp[it.name];
+    });
+  } catch (e) {}
+})();
+function dgLearnCommit(it) {                        // called once the dungeon really started from that item
+  var p = it._pend; it._pend = null;
+  if (!p) return;
+  try {
+    var tb = JSON.parse(store.get("dg_tabs", "{}")) || {}, fp = JSON.parse(store.get("dg_fp", "{}")) || {};
+    tb[it.name] = p.tab; it.tab = p.tab;
+    var vars = fp[it.name] || [], near = false;
+    for (var i = 0; i < vars.length; i++) if (bagDist(vars[i], p.hist) < 0.12) near = true;
+    if (!near) { vars.push(p.hist); if (vars.length > 4) vars.shift(); }   // icons can pulse: keep a few variants
+    fp[it.name] = vars; BAG_TPL[dgKey(it)] = vars;
+    store.put("dg_tabs", JSON.stringify(tb)); store.put("dg_fp", JSON.stringify(fp));
+    log("DAILY DG: learned " + it.name + " = bag tab " + romanTab(p.tab) + " (found in any tab from now on)");
+  } catch (e) { log("learn err: " + e); }
+}
+function dgFindInBag(it) {                          // opens each bag tab in turn; returns { hit, tab, hist } or null. The bag window is already open.
+  var order = [it.tab || 7], t, keys = [];
+  for (t = BAG_TAB_COUNT; t >= 1; t--) if (t !== order[0]) order.push(t);
+  if (it.icon && BAG_TPL[it.icon]) keys.push(it.icon);
+  if (BAG_TPL[dgKey(it)]) keys.push(dgKey(it));
+  var i, k, img, h;
+  function histOf(im, hh) { return bagHist(im, hh.x - BAG_CELL / 2, hh.y - BAG_CELL / 2); }
+  if (it.cellLearned && it.cell) {                  // you set this cell by hand: trust it first, on its own tab
+    tapGame(bagTabPoint(order[0]), "DAILY DG: bag tab " + romanTab(order[0])); sleep(1000); dgChk();
+    img = grab();
+    if (img) {
+      if (bagCellFilled(img, it.cell[0], it.cell[1])) {
+        h = { row: it.cell[0], col: it.cell[1], d: 0, x: Math.round(BAG_X0 + (it.cell[1] - 1) * BAG_CELL + BAG_CELL / 2), y: Math.round(BAG_Y0 + (it.cell[0] - 1) * BAG_CELL + BAG_CELL / 2) };
+        var hs = histOf(img, h); img.recycle();
+        log("DAILY DG: " + it.name + " - set cell row " + h.row + ", col " + h.col + " in tab " + romanTab(order[0]));
+        return { hit: h, tab: order[0], hist: hs };
+      }
+      img.recycle();
+      log("DAILY DG: " + it.name + " - set cell is empty in tab " + romanTab(order[0]) + ", scanning the other tabs");
+    }
+  }
+  if (keys.length) {
+    for (i = 0; i < order.length; i++) {
+      t = order[i];
+      if (it.cellLearned && it.cell && i === 0) continue;       // already looked at that tab above
+      tapGame(bagTabPoint(t), "DAILY DG: bag tab " + romanTab(t)); sleep(1000); dgChk();
+      img = grab(); if (!img) continue;
+      h = null;
+      for (k = 0; k < keys.length && !h; k++) { try { h = bagFind(img, keys[k]); } catch (e) { log("bag scan error: " + e); } }
+      if (h) { var hs2 = histOf(img, h); img.recycle(); log("DAILY DG: " + it.name + " found in bag tab " + romanTab(t) + " (match " + h.d.toFixed(2) + ")"); return { hit: h, tab: t, hist: hs2 }; }
+      img.recycle();
+    }
+  }
+  if (it.cell && !it.cellLearned) {                 // no fingerprint yet: the fixed cell, on its own tab (learned after the first successful run)
+    tapGame(bagTabPoint(order[0]), "DAILY DG: bag tab " + romanTab(order[0])); sleep(1000); dgChk();
+    img = grab();
+    if (img) {
+      h = { row: it.cell[0], col: it.cell[1], d: 0, x: Math.round(BAG_X0 + (it.cell[1] - 1) * BAG_CELL + BAG_CELL / 2), y: Math.round(BAG_Y0 + (it.cell[0] - 1) * BAG_CELL + BAG_CELL / 2) };
+      var filled = bagCellFilled(img, it.cell[0], it.cell[1]), hs3 = histOf(img, h); img.recycle();
+      if (filled) { log("DAILY DG: " + it.name + " - using fixed bag cell row " + h.row + ", col " + h.col + " in tab " + romanTab(order[0])); return { hit: h, tab: order[0], hist: hs3 }; }
+      log("DAILY DG: " + it.name + " - fixed cell is empty in tab " + romanTab(order[0]));
+    }
+  }
+  return null;
+}
 function dgEnterFromBag0(it) {         // bag -> tab VII -> tap this dungeon's item icon. true = dungeon is running
   sleep(500); dgChk();
   if (!ensureCapture()) { toast("No screen capture - allow screen capture for AutoX.js"); return false; }
   log("DAILY DG: bag route for " + it.name);
+  it._pend = null;
   tapGame(P_BAG, "DAILY DG: tap bag (storage)"); sleep(1500); dgChk();
-  tapGame(P_BAG_TAB7, "DAILY DG: bag slot VII"); sleep(1200); dgChk();
-  var img = grab();
-  if (!img) { dgBagClose(); return false; }
-  var hit = null;
-  if (!it.cellLearned) { try { hit = bagFind(img, it.icon); } catch (e) { log("bag scan error: " + e); } }
-  img.recycle();
-  if (!hit && it.cell) {              // no icon fingerprint for this item: use its fixed cell in tab VII
-    var cr = it.cell[0] - 1, cc = it.cell[1] - 1;
-    hit = { row: it.cell[0], col: it.cell[1], d: 0, x: Math.round(BAG_X0 + cc * BAG_CELL + BAG_CELL / 2), y: Math.round(BAG_Y0 + cr * BAG_CELL + BAG_CELL / 2) };
-    log("DAILY DG: " + it.name + " - using fixed bag cell row " + hit.row + ", col " + hit.col);
-  }
-  if (!hit) { log("DAILY DG: " + it.name + " icon not found in bag tab VII"); toast("No " + it.sub + " in bag tab VII"); dgBagClose(); return false; }
-  log("DAILY DG: " + it.name + " icon at row " + hit.row + ", col " + hit.col + " (match " + hit.d.toFixed(2) + ")");
+  var found = dgFindInBag(it), hit = found && found.hit;
+  if (!hit) { log("DAILY DG: " + it.name + " item not found in any bag tab (I-VII)"); toast("No " + it.sub + " in the bag"); dgBagClose(); return false; }
+  it._pend = { tab: found.tab, hist: found.hist };
+  log("DAILY DG: " + it.name + " icon at tab " + romanTab(found.tab) + ", row " + hit.row + ", col " + hit.col + " (match " + hit.d.toFixed(2) + ")");
   tapGame([hit.x, hit.y, "R"], "DAILY DG: tap " + it.sub);
   if (it.move !== false) {            // every dungeon item shows an info panel with MOVE (unless the item already opened the dungeon window)
-    sleep(1200); dgChk();
-    var im0 = grab(), already = false;
-    if (im0) { already = dgOnSelect(im0) || fracIn(im0, R_DG_CHAL, isBtnBlue, 4) > 0.5; im0.recycle(); }
+    var im0, already = false, panelUp = false, pq;
+    for (pq = 0; pq < 8 && !panelUp; pq++) {                // up to 4 s for the item info panel (Move button)
+      sleep(500); dgChk();
+      im0 = grab(); if (!im0) continue;
+      panelUp = dgInfoPanel(im0); im0.recycle();
+    }
+    if (!panelUp) { im0 = grab(); if (im0) { already = dgOnSelect(im0) || fracIn(im0, R_DG_CHAL, isBtnBlue, 4) > 0.5; im0.recycle(); } }
+    log("DAILY DG: after the item tap - info panel " + (panelUp ? "visible -> MOVE" : "not seen") + ", dungeon window already open: " + already);
     if (!already) {
-      tapGame(P_MAP_MOVE, "DAILY DG: MOVE to " + it.name + " gate");
-      for (var wq = 0; wq < 10; wq++) {                    // up to 5 s: confirm the Warp dialog when it appears
-        sleep(500); dgChk();
-        var iw = grab();
-        if (!iw) continue;
-        var warp = fracIn(iw, R_WARP_OK, isBtnBlue, 4) > 0.5; iw.recycle();
-        if (warp) { tapGame(P_WARP_OK, "DAILY DG: warp Confirmation"); break; }
-      }
+      var mv = dgPressMove(it);
+      if (mv === false) { log("DAILY DG: MOVE button did not work for " + it.name + " - calibrate P_MAP_MOVE"); toast("MOVE did not work - check P_MAP_MOVE"); dgBagClose(); return false; }
       for (var mw = 0; mw < DG_MOVE_WAIT; mw += 500) { sleep(500); dgChk(); }
       log("DAILY DG: moved, opening the gate");
       if (it.y !== undefined) return dgEnter(it);          // known row: pick it in Select Dungeon
@@ -3665,7 +3861,7 @@ function dgRunQueue() {
             if (runs > 1) log("DAILY DG: " + it.name + " run " + rn + "/" + runs);
             try { rec = DBG.dgBegin("DAILY", it.name, rn, runs); } catch (e) {}          // record FIRST, before entering
             var started = false;
-            if (it.icon || it.cell) started = dgEnterFromBag(it);                        // bag tab VII: tap this dungeon's item
+            if (it.icon || it.cell || BAG_TPL[dgKey(it)]) { started = dgEnterFromBag(it); if (started && it._pend) { try { dgLearnCommit(it); } catch (elc) {} } it._pend = null; }                        // bag tab VII: tap this dungeon's item
             if (!started && it.y !== undefined && !it.noItem) started = dgEnter(it);        // otherwise (or if the bag route failed): Select Dungeon list
             if (!started) {
               try { DBG.dgEnd(rec, "NOT_STARTED", "entry failed / no entry item left"); } catch (e) {}
@@ -3709,18 +3905,11 @@ function dgRunQueue() {
 // Shares dgBusy / dgCancel with DAILY DG, so the two can never run at the same time and the stop logic is the same.
 var P_NA_QUEST = [1835, 272, "R"];              // in dungeon: centre of the Dungeon quest panel text (tapping it = walk to the quest, like by hand)
 var P_DG_ENTER = [1370, 1100];                  // Select Dungeon: normal "enter" button (centre; calibrate here if the tap misses)
-var naOn = false;
+var naOn = false, naMode = "";                  // naMode: "list" = NON PREM DG, "auto" = AUTO DG (only one non-prem command runs at a time: one game screen)
+function naTag() { return naMode === "list" ? "NON PREM DG" : "AUTO DG"; }   // log prefix of the running non-prem command
+function dgWho() { return naOn ? (naMode === "list" ? "NON PREM DG" : "AUTO DG") : "DAILY DG"; }   // name of whatever dungeon command is running now
 // ---- DG RECORD for AUTO DG (non premium): per-day counters + last 8 runs, saved in storage (also in dg_runs.csv) ----
 var naRecOn = true; try { naRecOn = store.get("na_recOn", true) !== false; } catch (e) {}
-function naRecSync() {
-  ui.run(function () {
-    try {
-      V("btnNARec").setText(naRecOn ? "DG RECORD: ON" : "DG RECORD: OFF");
-      V("btnNARec").setBackgroundColor(android.graphics.Color.parseColor(naRecOn ? "#2f7d4a" : "#3a4152"));
-      V("naRec").setText(naRecText());
-    } catch (e) {}
-  });
-}
 var naEv = { tap: 0, quest: 0, pause: 0, walk: 0, all: 0, step: 0 };
 function naEvReset() { naEv = { tap: 0, quest: 0, pause: 0, walk: 0, all: 0, step: 0 }; }
 function naEvSummary() { return "steps " + naEv.step + ", all taps " + naEv.all + ", quest taps " + naEv.tap + ", quest changes " + naEv.quest + ", fights/pauses " + naEv.pause + ", walks " + naEv.walk; }
@@ -3766,7 +3955,7 @@ function recFromLog(s) {
   if (/^dungeon: character running/.test(s)) return recPush("WALK_START", s);
   if (/^dungeon: .*taps paused/.test(s)) return recPush("PAUSE", s);
   if (/^dungeon: .*taps continue/.test(s)) return recPush("RESUME", s);
-  if (/^(DAILY DG|AUTO DG|auto dg|auto detect)/i.test(s)) return recPush("STEP", s.replace(/^(DAILY DG|AUTO DG): ?/i, ""));
+  if (/^(DAILY DG|AUTO DG|NON PREM DG|auto dg|auto detect)/i.test(s)) return recPush("STEP", s.replace(/^(DAILY DG|AUTO DG|NON PREM DG): ?/i, ""));
 }
 // ---- DG PROFILES: every FINISHED AUTO DG run is saved per dungeon (runs, avg / best time, step timeline of the fastest run) ----
 // File: <log dir>/dg_profiles.json (backup copy in storage). AUTO DG loads the profile of the dungeon it runs and uses the average time
@@ -3928,116 +4117,352 @@ function naRecAdd(name, result, secs, extra) {
     ui.run(function () { try { V("naRec").setText(naRecText()); } catch (e) {} });
   } catch (e) { log("na record err: " + e); }
 }
-function naSync() {
-  ui.run(function () {
-    try {
-      V("btnNA").setText(naOn ? "AUTO DUNGEON RUN: ON" : "AUTO DUNGEON RUN: OFF");
-      V("btnNA").setBackgroundColor(android.graphics.Color.parseColor(naOn ? "#2f7d4a" : "#8a5a1a"));
-    } catch (e) {}
-  });
+// ===== AUTO DG (NON PREMIUM) - DUNGEON LIST with an ON / OFF switch per dungeon =====
+// Open it with DUNGEON LIST. Switch ON the dungeons you want (list order = lowest -> highest level). AUTO DUNGEON RUN then picks each
+// ON dungeon in Select Dungeon, uses the normal Enter button, and goes on with the next one when the entries run out (or Runs is reached).
+// Nothing ON = the old behaviour (runs the dungeon already selected in the game). Only dungeons with a known Select Dungeon row are listed.
+var NA_LIST = DAILY_LIST.filter(function (it) { return it.y !== undefined; });
+var NA_INFO = {};
+DG_DATA.forEach(function (r) { NA_INFO[r[3]] = "Lv." + r[0] + "  |  DP " + r[5] + "  |  Max " + r[6]; });
+// ===== EOD B2F TEMPLATE MODE (Tower of the Undead B2F) inside AUTO DG - NON PREMIUM =====
+// Port of eod_b2f_vphone-14.js. The dungeon is still entered with the normal Enter button (no Item Entrance); once inside, the
+// in-dungeon part is done by picture matching instead of the generic quest taps: "Exit the Tower", the NPC "Let's go" button and the
+// progress-message line (Move to target / Chat to ... Door / boss names ...) are tapped ONLY when their template is seen, AUTO is
+// pressed only when it is seen OFF, and the reward sequence (Roll -> Exit -> Dungeon Clear -> Exit) is closed at the end.
+// Templates (templates.zip of the EOD script) go in /sdcard/eod/templates/ . It is used only for Tower of the Undead B2F and only when
+// the templates are found; otherwise the normal AUTO DG logic runs. Switch it off with the EOD B2F TEMPLATE MODE button.
+// Positions are in the EOD reference (2576x1177): left / centre / right anchored, scaled by the game area height.
+var EOD_BASE_W = 2576, EOD_BASE_H = 1177;
+var EOD_DIRS = ["/sdcard/eod/templates/", "/sdcard/eod/templates/btn/", "/sdcard/eod/templates/obj/", "/sdcard/eod/btn/", "/sdcard/eod/obj/", "/storage/emulated/0/\u811a\u672c/btn/", "/storage/emulated/0/\u811a\u672c/obj/"];   // flat folder, or the btn / obj folders from the zips
+var EOD_THR = 0.85, EOD_THR_DROP = 0.03, EOD_ALWAYS_THR = 0.78, EOD_AUTO_THR = 0.75, EOD_FINISH_THR = 0.75;
+var EOD_AUTO_REGION = [1800, 600, 770, 570];          // AUTO button area (bottom-right quarter)
+var EOD_PROGRESS_REGION = [2080, 296, 440, 70];       // progress message line
+var EOD_AUTO_COOLDOWN = 2000, EOD_IDLE = 3 * 60000, EOD_FINISH_TIMEOUT = 45000, EOD_REGION_PAD = 10;
+var EOD_ALWAYS = ["move_to_target", "move_next", "chat_to_unidentifiable", "chat_to_second_forbidden", "chat_to_first_forbidden_door",
+  "printz_verzen", "death_prime_knight", "death_guard", "phantom_archer", "jumar_carbo", "killian_grausten", "andreas_schultz",
+  "flame_emperor_zombie", "flame_warrior_zombie", "treasure_chest", "minotaurus", "jidarsch", "pogarr", "rik", "wurk", "zigdris",
+  "middle_area_warp", "boss_area_warp"];
+var eodCache = {}, eodCacheKey = "", eodWarned = {}, eodLastClick = {}, eodLastAutoLog = 0;
+function eodGeo() {
+  var v = (LAND && C.autoFit && VIEW) ? VIEW : { x: 0, y: 0, w: W, h: H };     // portrait capture: the picture is turned upright first (eodGrab), so W x H is the landscape size
+  return { x: v.x, y: v.y, w: v.w, h: v.h, s: v.h / EOD_BASE_H };
 }
-function naEnterOnce() {          // town / Select Dungeon -> normal Enter -> Challenge -> AUTO. true = dungeon is running
-  var it = { name: "Auto dungeon" };
-  sleep(500); dgChk();
-  if (!ensureCapture()) { toast("No screen capture - allow screen capture for AutoX.js"); return false; }
-  var img = grab();
-  if (!img) { toast("Can't read the screen"); return false; }
-  var onSel = dgOnSelect(img), chal0 = dgChalShown(img);
-  img.recycle();
-  if (chal0) return dgTapChallenge(it, "already open");
-  if (!onSel) {
-    tapGame(P_DG_CENTER, "auto dg: open Select Dungeon");
-    for (var q = 0; q < 12 && !onSel; q++) {
-      sleep(500); dgChk();
-      var imq = grab();
-      if (!imq) continue;
-      onSel = dgOnSelect(imq);
-      var chq = dgChalShown(imq);
-      imq.recycle();
-      if (chq) return dgTapChallenge(it, "after gate tap");
+function eodAnchor(x) { return x < EOD_BASE_W / 3 ? "L" : (x > EOD_BASE_W * 2 / 3 ? "R" : "C"); }
+function eodMapX(x, a, g) {
+  a = a || eodAnchor(x);
+  if (a === "L") return g.x + x * g.s;
+  if (a === "R") return g.x + g.w - (EOD_BASE_W - x) * g.s;
+  return g.x + g.w / 2 + (x - EOD_BASE_W / 2) * g.s;
+}
+function eodRegion(r, g) {                              // [x, y, w, h] or [x, y, w, h, anchor] -> screen px region, clamped
+  var a = r[4] || eodAnchor(r[0] + r[2] / 2);
+  var x0 = eodMapX(r[0] - EOD_REGION_PAD, a, g), x1 = eodMapX(r[0] + r[2] + EOD_REGION_PAD, a, g);
+  var y0 = g.y + (r[1] - EOD_REGION_PAD) * g.s, y1 = g.y + (r[1] + r[3] + EOD_REGION_PAD) * g.s;
+  x0 = Math.max(0, Math.round(x0)); y0 = Math.max(0, Math.round(y0));
+  x1 = Math.min(W, Math.round(x1)); y1 = Math.min(H, Math.round(y1));
+  return [x0, y0, Math.max(1, x1 - x0), Math.max(1, y1 - y0)];
+}
+function eodTpl(name) {
+  var g = eodGeo(), key = g.s.toFixed(3);
+  if (key !== eodCacheKey) { eodCache = {}; eodCacheKey = key; }
+  if (eodCache[name] === undefined) {
+    var t = null;
+    for (var d = 0; d < EOD_DIRS.length && !t; d++) {
+      var f = EOD_DIRS[d] + name + ".png";
+      try { if (files.exists(f)) t = images.read(f); } catch (e) {}
     }
+    if (t && Math.abs(g.s - 1) > 0.01) t = images.scale(t, g.s, g.s);
+    eodCache[name] = t || null;
   }
-  if (!onSel && dgInDungeon()) { log("AUTO DG: already inside a dungeon -> AUTO step"); return dgAfterChallenge(it); }
-  if (!onSel) { log("AUTO DG: Select Dungeon did not open"); toast("Select Dungeon didn't open - stand at the dungeon gate"); return false; }
-  sleep(600); dgChk();
-  var im2 = grab(), enterOk = false, ticked = false;
-  if (im2) { enterOk = fracIn(im2, R_DG_ENTER, isBtnBlue, 4) > 0.5; ticked = fracIn(im2, R_DG_REPEAT, isOrange, 3) > 0.04; naDetectNow(im2, "select"); im2.recycle(); }
-  if (!enterOk) { log("AUTO DG: the Enter button is grey (no entries left, or no dungeon selected)"); toast("No entries left"); dgCloseSelect(); return false; }
-  if (ticked) { tapGame(P_DG_REPEAT, "auto dg: repeat OFF"); sleep(700); dgChk(); }   // repeats come only from the Runs setting
-  tapGame(P_DG_ENTER, "auto dg: enter");
-  var ok = false;
-  for (var i = 0; i < 20 && !ok; i++) {
-    sleep(500); dgChk();
-    var im = grab();
-    if (!im) continue;
-    ok = dgChalShown(im);
-    if (ok) naDetectNow(im, "dialog");
-    im.recycle();
-  }
-  if (!ok) {
-    if (dgInDungeon()) { log("AUTO DG: no Enter Dungeon dialog, the dungeon is already running -> AUTO step"); return dgAfterChallenge(it); }
-    log("AUTO DG: Enter Dungeon dialog not seen - check P_DG_ENTER");
-    toast("Enter tap missed - Challenge dialog not seen");
-    dgCloseSelect();
-    return false;
-  }
-  return dgTapChallenge(it, "after Enter");
+  return eodCache[name];
 }
-function naStart(runs) {
-  if (dgBusy) return;
-  naManual = ""; try { naManual = String(store.get("na_name", "")).trim(); } catch (e) {}   // typed name wins; empty = auto detect
-  var nm = naManual || "detecting...";
-  dgBusy = true; dgCancel = false; naOn = true; naSync();
-  threads.start(function () {
-    var done = 0;
+function eodFind(name, region, img, thr) {              // centre of the match in screen px, or null
+  var t = eodTpl(name);
+  if (!t) { if (!eodWarned[name]) { eodWarned[name] = 1; log("EOD: template missing: " + name); } return null; }
+  var g = eodGeo();
+  var opt = { threshold: (thr || EOD_THR) - (Math.abs(g.s - 1) > 0.02 ? EOD_THR_DROP : 0) };
+  if (region) opt.region = eodRegion(region, g);
+  var p = images.findImage(img, t, opt);
+  if (!p) return null;
+  return { x: p.x + t.getWidth() / 2, y: p.y + t.getHeight() / 2 };
+}
+function eodScore(name, region, img) {                  // best match score of a template inside a region (0 = none)
+  var t = eodTpl(name);
+  if (!t) return { s: 0 };
+  var r = images.matchTemplate(img, t, { region: eodRegion(region, eodGeo()), threshold: 0.5, max: 3 });
+  var b = r ? r.best() : null;
+  if (!b) return { s: 0 };
+  return { s: b.similarity, x: b.point.x + t.getWidth() / 2, y: b.point.y + t.getHeight() / 2 };
+}
+function eodGrab() {                                    // screenshot, always landscape (portrait capture = game rotated 90deg clockwise -> turn it back)
+  var im = grab();
+  if (!im || LAND) return im;
+  var r = null;
+  try { r = images.rotate(im, 270); } catch (e) { log("EOD rotate err: " + e); }
+  im.recycle();
+  return r;
+}
+function eodTap(p, name) {
+  log("EOD tap " + name);
+  var tx = Math.round(p.x), ty = Math.round(p.y);
+  if (!LAND) { var px = H - ty, py = tx; tx = px; ty = py; }       // landscape picture point -> portrait screen point
+  METHODS[method](tx, ty);
+  eodLastClick[name] = Date.now();
+}
+function eodCan(name, cooldown) { return !eodLastClick[name] || Date.now() - eodLastClick[name] >= cooldown; }
+function eodClick(img, name, region, cooldown) {
+  if (!eodCan(name, cooldown || 0)) return false;
+  var p = eodFind(name, region, img);
+  if (!p) return false;
+  eodTap(p, name);
+  return true;
+}
+function eodTapAlways(img) {                            // progress messages: tapped every time they are seen
+  for (var i = 0; i < EOD_ALWAYS.length; i++) {
+    var name = EOD_ALWAYS[i];
+    var p = eodFind(name, EOD_PROGRESS_REGION, img, EOD_ALWAYS_THR);
+    if (!p && name === "move_next") p = eodFind(name, null, img, EOD_THR);       // may sit outside the message line
+    if (p) { eodTap(p, name + " (always)"); return true; }
+  }
+  return false;
+}
+function eodAuto(img) {                                 // AUTO attack: tap only when OFF clearly beats ON
+  var on = eodScore("auto_on", EOD_AUTO_REGION, img), off = eodScore("auto_off", EOD_AUTO_REGION, img);
+  if (Date.now() - eodLastAutoLog > 3000) { eodLastAutoLog = Date.now(); log("EOD AUTO on=" + on.s.toFixed(2) + " off=" + off.s.toFixed(2)); }
+  if (on.s >= off.s) return false;
+  if (!eodCan("auto_off", EOD_AUTO_COOLDOWN)) return false;
+  if (off.s < EOD_AUTO_THR || off.s <= on.s + 0.03) return false;
+  eodTap(off, "auto_off");
+  return true;
+}
+function eodFinish() {                                  // after Exit the Tower: Roll -> Exit -> Dungeon Clear -> Exit
+  var end = Date.now() + EOD_FINISH_TIMEOUT, seq = ["roll", "sp_exit", "dg_exit"];
+  eodLastClick = {};
+  while (Date.now() < end) {
+    dgChk();
+    var img = eodGrab();
+    if (!img) { sleep(300); continue; }
+    var hit = null;
     try {
-      try { DBG.dgQueue("AUTO", "QUEUE_START", runs ? runs + " runs" : "until no entries left"); } catch (e) {}
-      log("AUTO DG: start" + (runs ? " (" + runs + " runs)" : " (until no entries left)"));
-      while (!runs || done < runs) {
-        dgChk();
-        naEvReset(); naDet = "";
-        var rec = null; try { rec = DBG.dgBegin("AUTO", nm, done + 1, runs || "?"); } catch (e) {}   // record FIRST
-        if (!naEnterOnce()) { try { DBG.dgEnd(rec, "NOT_STARTED", "entry failed / no entries left"); } catch (e) {} naRecAdd(naName(), "NOT_STARTED", 0, ""); break; }
-        try { var imD = grab(); if (imD) { naDetectNow(imD, "dungeon"); imD.recycle(); } } catch (e) {}   // inside the dungeon: read its name
-        dgProfUse(naName());
-        var wf = dgWaitFinish();
-        var elS = rec ? Math.round((Date.now() - rec.t0) / 1000) : 0;
-        if (!wf || wf === "skip") { try { DBG.dgEnd(rec, wf === "skip" ? "SKIPPED" : "TIMEOUT", "did not finish normally | " + naEvSummary()); } catch (e) {} naRecAdd(naName(), wf === "skip" ? "SKIPPED" : "TIMEOUT", elS, naEvSummary()); log("AUTO DG: dungeon did not finish normally - stopped"); break; }
-        try { DBG.dgEnd(rec, "FINISHED", naEvSummary()); } catch (e) {}
-        naRecAdd(naName(), "FINISHED", elS, naEvSummary());
-        dgProfUpdate(naName(), elS, recTrace, naEvSummary());
-        done++;
-        log("AUTO DG: run " + done + (runs ? "/" + runs : "") + " finished");
-        sleep(4000); dgChk();                  // back in town, let the screen settle
+      for (var i = 0; i < seq.length && !hit; i++) {
+        if (!eodCan(seq[i], 1500)) continue;
+        var p = eodFind(seq[i], null, img, EOD_FINISH_THR);
+        if (p) { eodTap(p, seq[i]); hit = seq[i]; }
       }
-      log("AUTO DG: done - " + done + " run(s)");
-      toast("Auto DG finished: " + done + " run(s)");
+    } finally { img.recycle(); }
+    if (hit === "dg_exit") { sleep(300); return true; }
+    sleep(300);
+  }
+  log("EOD: reward screens not found (Roll / Exit) - going on");
+  return false;
+}
+function eodWait() {                                    // true = run finished (Exit the Tower tapped), false = idle / too long
+  eodLastClick = {};
+  var lastSeen = Date.now(), t0 = Date.now(), cap = naCap || DG_MAX_RUN;
+  log("EOD B2F: template mode (templates from " + EOD_DIRS[0] + ")");
+  while (Date.now() - t0 < cap) {
+    dgChk();
+    if (Date.now() - lastSeen > EOD_IDLE) { log("EOD B2F: nothing seen for " + Math.round(EOD_IDLE / 60000) + " min - stopped"); return false; }
+    var img = eodGrab();
+    if (!img) { sleep(500); continue; }
+    var done = false, acted = false;
+    try {
+      if (eodClick(img, "exit_the_tower")) done = true;
+      else if (eodClick(img, "lets_go")) acted = true;
+      else if (eodTapAlways(img)) acted = true;
+      else if (eodAuto(img)) acted = true;
+    } finally { img.recycle(); }
+    if (done) { eodFinish(); return true; }
+    if (acted) lastSeen = Date.now();
+    sleep(30);
+  }
+  log("EOD B2F: still running after " + Math.round(cap / 60000) + " min - stopped");
+  return false;
+}
+function eodReady() {
+  var need = ["exit_the_tower", "auto_on", "auto_off"];
+  for (var i = 0; i < need.length; i++) if (!eodTpl(need[i])) { log("EOD: template " + need[i] + ".png not found in " + EOD_DIRS[0]); return false; }
+  return true;
+}
+function naEodOn() { try { return store.get("na_eod", true) !== false; } catch (e) { return true; } }
+function naUseEod() {                                   // Tower of the Undead B2F + switch ON + templates present
+  try {
+    if (!naEodOn()) return false;
+    if (!/tower.*undead.*b2f/.test(naNorm(naName()))) return false;
+    for (var k in eodCache) if (!eodCache[k]) delete eodCache[k];     // templates copied since the last run are picked up
+    eodWarned = {};
+    if (!eodReady()) { log(naTag() + ": EOD B2F templates missing - normal AUTO DG logic"); return false; }
+    return true;
+  } catch (e) { log("EOD check err: " + e); return false; }
+}
+// ===== NON PREM DG: list with an ON / OFF switch per dungeon + queue runner =====
+// Same flow as DAILY DG (bag -> the ON dungeon's item -> MOVE -> Select Dungeon -> Item Entrance -> Challenge) but the AUTO tapped is the round one below the attack button.
+// Works in Cabal Mobile and Cabal Return of Action (RA uses DQ.ra / PROFILES.ra). Shares dgBusy / dgCancel with DAILY DG: never both at once.
+var npw = null, npSel = {}, npTouched = false;
+function npRunsGet() { try { var n = parseInt(store.get("np_runs", 1), 10); return isNaN(n) ? 1 : Math.max(1, Math.min(99, n)); } catch (e) { return 1; } }
+function npRunsSet(n) { n = Math.max(1, Math.min(99, n)); try { store.put("np_runs", n); } catch (e) {} return n; }
+function npSelCount() { var n = 0; for (var k in npSel) if (npSel[k]) n++; return n; }
+function npSelSave() { var names = []; NA_LIST.forEach(function (it) { if (npSel[it.name]) names.push(it.name); }); try { store.put("np_on", JSON.stringify(names)); } catch (e) {} return names.length; }
+function npSelSaved() { try { var a = JSON.parse(store.get("np_on", "[]")); return Array.isArray(a) ? a : []; } catch (e) { return []; } }
+function npSelLoadIfEmpty() { if (npTouched || npSelCount() > 0) return; npSelSaved().forEach(function (n) { npSel[n] = true; }); }
+function closeNp() { if (npw) { try { npw.close(); } catch (e) {} npw = null; } }
+function npNextSel() { for (var i = 0; i < NA_LIST.length; i++) { var nm = NA_LIST[i].name; if (npSel[nm] && !dgTried[nm]) return NA_LIST[i]; } return null; }
+function npBtnSync() {
+  try {
+    var on = !!(dgBusy && naOn);
+    ui.run(function () {
+      try {
+        V("btnNP").setText(on ? "NON PREM DG: ON" : "NON PREM DG: OFF");
+        V("btnNP").setBackgroundColor(android.graphics.Color.parseColor(on ? "#2f7d4a" : "#3a4152"));
+      } catch (e) {}
+    });
+  } catch (e) {}
+}
+setInterval(npBtnSync, 1000);
+function npRunQueue() {
+  if (dgBusy) return;                                  // already running (daily or non prem): never a second queue
+  dgBusy = true; dgCancel = false; naOn = true; naMode = "list"; dgTried = {}; naCap = 0;   // set BEFORE the thread starts (naCap reset: never inherit an AUTO DG stall limit)
+  try { DBG.dgQueue("NONPREM", "QUEUE_START", "runs per dungeon: " + npRunsGet()); } catch (e) {}
+  try { closeNp(); } catch (ec) {}                     // the popup must not cover the game while we tap
+  threads.start(function () {
+    try {
+      var it;
+      while ((it = npNextSel())) {
+        dgCur = it.name; dgChk(); dgTried[it.name] = true;
+        var runs = npRunsGet(), halt = false, doneRuns = 0, rec = null;
+        try {
+          for (var rn = 1; rn <= runs; rn++) {
+            log("NON PREM DG: " + it.name + " run " + rn + "/" + runs);
+            try { rec = DBG.dgBegin("NONPREM", it.name, rn, runs); } catch (e) {}
+            var started = false;
+            it.noItem = false;
+            if (it.icon || it.cell || BAG_TPL[dgKey(it)]) { started = dgEnterFromBag(it); if (started && it._pend) { try { dgLearnCommit(it); } catch (elc) {} } it._pend = null; }   // 1) bag: find the ON dungeon's item, tap it, MOVE
+            if (!started && it.y !== undefined && !it.noItem) started = dgEnter(it);   // 2) Select Dungeon list: row -> Item Entrance -> Challenge
+            if (!started) {
+              try { DBG.dgEnd(rec, "NOT_STARTED", "entry failed / no entry item left"); } catch (e) {}
+              log("NON PREM DG: " + it.name + " did not start (" + doneRuns + "/" + runs + " done) - going on with the next dungeon");
+              break;
+            }
+            log("NON PREM DG: waiting for " + it.name + " to finish");
+            var wf = dgWaitFinish();
+            if (wf === "skip") { try { DBG.dgEnd(rec, "SKIPPED", "dungeon timer never appeared"); } catch (e) {} try { dgCloseSelect(); } catch (ecs) { if (ecs === "cancelled") throw ecs; } break; }
+            if (!wf) { try { DBG.dgEnd(rec, "TIMEOUT", "still running at max time - queue stopped"); } catch (e) {} halt = true; break; }
+            doneRuns++;
+            try { DBG.dgEnd(rec, "FINISHED", ""); } catch (e) {}
+            log("NON PREM DG: " + it.name + " finished (" + doneRuns + "/" + runs + ")");
+            sleep(4000); dgChk();                        // back in town, let the screen settle
+          }
+        } catch (ed) {
+          try { DBG.dgEnd(rec, ed === "cancelled" ? "CANCELLED" : "ERROR", String(ed)); } catch (e) {}
+          if (ed === "cancelled") throw ed;
+          log("NON PREM DG: error in " + it.name + " (" + ed + ") - going on with the next dungeon");
+          try { dgCloseSelect(); } catch (ecs2) { if (ecs2 === "cancelled") throw ecs2; }
+        }
+        if (halt) break;
+      }
     } catch (e) {
-      if (e === "cancelled") { log("AUTO DG: stopped after " + done + " run(s)"); toast("Auto DG stopped"); if (DBG.dgNow) naRecAdd(naName(), "CANCELLED", Math.round((Date.now() - DBG.dgNow.t0) / 1000), naEvSummary()); try { DBG.dgEnd(DBG.dgNow, "CANCELLED", "stopped by user | " + naEvSummary()); } catch (x) {} }
-      else { log("auto dg error: " + e); if (DBG.dgNow) naRecAdd(naName(), "ERROR", 0, naEvSummary()); try { DBG.dgEnd(DBG.dgNow, "ERROR", String(e) + " | " + naEvSummary()); } catch (x) {} }
+      if (e === "cancelled") { log("NON PREM DG: stopped"); toast("Non prem DG stopped"); }
+      else { log("non prem dg error: " + e); try { DBG.dgEnd(DBG.dgNow, "ERROR", String(e)); } catch (x) {} }
     } finally {
-      try { if (DBG.dgNow) DBG.dgEnd(DBG.dgNow, "ABORTED", "queue ended"); DBG.dgQueue("AUTO", "QUEUE_END", "session totals " + JSON.stringify(DBG.dgStats)); } catch (x) {}
-      dgBusy = false; dgCancel = false; naOn = false; naCap = 0; naSync();
+      try { if (DBG.dgNow) DBG.dgEnd(DBG.dgNow, "ABORTED", "queue ended"); DBG.dgQueue("NONPREM", "QUEUE_END", "session totals " + JSON.stringify(DBG.dgStats)); } catch (x) {}
+      dgBusy = false; naOn = false; naMode = ""; dgCur = ""; dgCancel = false; dgTried = {};   // ON switches are kept
     }
   });
 }
-V("btnNARec").on("click", function () {
-  naRecOn = !naRecOn;
-  try { store.put("na_recOn", naRecOn); } catch (e) {}
-  naRecSync();
-  toast(naRecOn ? "DG record ON" : "DG record OFF");
-});
-V("btnNAExp").on("click", function () { threads.start(dgProfExport); });
-V("btnNAImp").on("click", function () { threads.start(dgProfImport); });
-V("btnNA").on("click", function () {
-  if (naOn) { dgCancel = true; toast("Stopping..."); return; }
-  if (dgBusy || dgPending || dgArmed || running || (worker && worker.isAlive()) || respAlive()) { toast("Stop DAILY DG / the other scripts first"); return; }
-  releaseFocus();
-  var n = parseInt(String(V("inaruns").getText()), 10);
-  if (isNaN(n) || n < 0) n = 0;
-  n = Math.min(n, 99);
-  try { store.put("na_runs", n); store.put("na_name", String(V("inaname").getText()).trim().slice(0, 30)); } catch (e) {}
-  naStart(n);
+function npRender() {
+  if (!npw) return;
+  var box = npw.npItems, d = context.getResources().getDisplayMetrics().density, Color = android.graphics.Color;
+  function pad(v, a, b, c, e) { v.setPadding(Math.round(a * d), Math.round(b * d), Math.round(c * d), Math.round(e * d)); }
+  box.removeAllViews();
+  NA_LIST.forEach(function (it) {
+    var row = new android.widget.LinearLayout(context);
+    row.setOrientation(0); row.setGravity(16); pad(row, 6, 4, 6, 4);
+    var col = new android.widget.LinearLayout(context);
+    col.setOrientation(1);
+    var t1 = new android.widget.TextView(context);
+    t1.setText(it.name); t1.setTextColor(Color.WHITE); t1.setTextSize(12); t1.setTypeface(null, 1);
+    var t2 = new android.widget.TextView(context);
+    t2.setText(NA_INFO[it.name] || ""); t2.setTextColor(Color.parseColor("#8b93a7")); t2.setTextSize(10);
+    col.addView(t1); col.addView(t2);
+    row.addView(col, new android.widget.LinearLayout.LayoutParams(0, -2, 1));
+    var isOn = !!npSel[it.name];
+    var b = new android.widget.TextView(context);
+    b.setText(isOn ? "ON" : "OFF"); b.setTextColor(Color.WHITE); b.setTextSize(12); b.setTypeface(null, 1); b.setGravity(17);
+    b.setBackgroundColor(Color.parseColor(isOn ? "#2f7d4a" : "#3a4152")); pad(b, 16, 8, 16, 8);
+    b.setOnClickListener(function () {
+      npTouched = true;                                                      // user edited the switches: never auto-reload the saved list over them
+      if (npSel[it.name]) {                                                  // ON -> OFF
+        if (dgBusy && naOn && dgCur === it.name) { dgCancel = true; npSel[it.name] = false; toast("Stopping..."); }   // the running one: stop the queue
+        else { npSel[it.name] = false; toast("Removed: " + it.name); }
+      } else {
+        npSel[it.name] = true;
+        toast(dgBusy && naOn ? "Queued: " + it.name : "ON: " + it.name + " - press START when ready");
+      }
+      npRender();
+    });
+    row.addView(b);
+    box.addView(row);
+  });
+}
+function openNp() {
+  if (npw) { closeNp(); return; }                       // button toggles the popup
+  if (!dgBusy) { try { npSelLoadIfEmpty(); } catch (el) {} }
+  npw = floaty.window(sc(
+    '<vertical w="match_parent" bg="#F2111722" padding="4">' +
+      '<horizontal gravity="center_vertical">' +
+        '<text id="npHdr" text="NON PREM DG (drag here)" textColor="#c79bff" textSize="12sp" textStyle="bold" layout_weight="1" padding="6"/>' +
+        '<text id="npClose" text="\u2715" textColor="#ffffff" textSize="16sp" textStyle="bold" padding="8"/>' +
+      '</horizontal>' +
+      '<text text="switch dungeons ON (list order = lowest to highest), SAVE keeps them ON, then START. Bag -> MOVE -> Item Entrance, then the AUTO below the attack button." textColor="#6f778a" textSize="9sp" padding="4"/>' +
+      '<horizontal gravity="center_vertical" padding="4">' +
+        '<text text="Runs per dungeon" textColor="#e8ecf5" textSize="11sp" textStyle="bold" layout_weight="1"/>' +
+        '<text id="npMinus" text="\u2212" textColor="#ffffff" textSize="16sp" textStyle="bold" gravity="center" bg="#3a4152" w="38" h="34"/>' +
+        '<text id="npRuns" text="1" textColor="#c79bff" textSize="15sp" textStyle="bold" gravity="center" w="44" h="34"/>' +
+        '<text id="npPlus" text="+" textColor="#ffffff" textSize="16sp" textStyle="bold" gravity="center" bg="#3a4152" w="38" h="34"/>' +
+      '</horizontal>' +
+      '<horizontal>' +
+        '<button id="npStart" text="START" layout_weight="1" h="36" bg="#2f7d4a" textColor="#ffffff" textSize="12sp" textStyle="bold" padding="0"/>' +
+        '<button id="npSave" text="SAVE" layout_weight="1" h="36" bg="#2b5fa8" textColor="#ffffff" textSize="12sp" textStyle="bold" padding="0" marginLeft="4"/>' +
+      '</horizontal>' +
+      '<ScrollView id="npScroll" h="200" bg="#0b0e13"><vertical id="npItems"/></ScrollView>' +
+    '</vertical>'
+  ));
+  npw.setPosition(40, 140);
+  try { npw.disableFocus(); } catch (e) {}
+  var dm = context.getResources().getDisplayMetrics(), dn = dm.density;
+  try { npw.setSize(Math.round(280 * UI_SCALE * dn), -2); } catch (e) {}
+  var px0, py0, pwx, pwy;
+  npw.npHdr.setOnTouchListener(function (view, event) {
+    switch (event.getAction()) {
+      case 0: px0 = event.getRawX(); py0 = event.getRawY(); pwx = npw.getX(); pwy = npw.getY(); return true;
+      case 2: npw.setPosition(pwx + (event.getRawX() - px0), pwy + (event.getRawY() - py0)); return true;
+    }
+    return true;
+  });
+  npw.npClose.on("click", closeNp);
+  function runsShow() { try { npw.npRuns.setText(String(npRunsGet())); } catch (e) {} }
+  npw.npMinus.on("click", function () { npRunsSet(npRunsGet() - 1); runsShow(); });
+  npw.npPlus.on("click", function () { npRunsSet(npRunsGet() + 1); runsShow(); });
+  runsShow();
+  npw.npStart.on("click", function () {
+    if (dgBusy) { toast(naOn ? "Non prem DG is already running" : dgWho() + " is running - stop it first"); return; }
+    if (!npNextSel()) { toast("Switch at least one dungeon ON first"); return; }
+    npRunQueue(); npBtnSync();
+  });
+  function saveShow() { try { npw.npSave.setText("SAVE (" + npSelSaved().length + ")"); } catch (e) {} }
+  npw.npSave.on("click", function () { var n = npSelSave(); saveShow(); toast(n ? "Saved: " + n + " dungeon(s) stay ON" : "Saved: none ON"); });
+  saveShow();
+  npRender();
+}
+npSelLoadIfEmpty();
+V("btnNPList").on("click", openNp);
+V("btnNP").on("click", function () {
+  if (dgBusy && !naOn) { toast(dgWho() + " is running - stop it with its own button first"); return; }
+  if (dgBusy && naOn) { dgCancel = true; dgTried = {}; toast("Non prem DG OFF"); npBtnSync(); return; }    // ON -> OFF: stop
+  try { npSelLoadIfEmpty(); } catch (el) {}
+  if (npNextSel()) { npRunQueue(); toast("Non prem DG ON"); }
+  else { toast("Switch the dungeons you want ON, then press START"); if (!npw) openNp(); }
+  npBtnSync();
 });
 function dgStartSoon() {    // short countdown so several dungeons can be switched ON before the first one starts
   if (dgPending) return;
@@ -4087,7 +4512,7 @@ function dailyRender() {
         dgLastTap = it.name; dgLastAt = now; toast("Done today - tap again to run anyway"); return;
       }
       dgSel[it.name] = true; if (dgDone(it.name)) dgForce[it.name] = true;    // OFF -> ON (done today + tapped twice = run it again)
-      if (dgBusy) { toast("Queued: " + it.name); dailyRender(); return; }    // added to the running queue
+      if (dgBusy && !naOn) { toast("Queued: " + it.name); dailyRender(); return; }    // added to the running DAILY DG queue
       toast("ON: " + it.name + " - press START DG when ready");
       dailyRender();
     });
@@ -4187,7 +4612,8 @@ function openDaily() {
   });
   autoShow();
   dpw.dpStart.on("click", function () {
-    if (dgBusy) { toast("Daily DG is already running"); return; }
+    if (dgBusy) { toast(naOn ? dgWho() + " is running - stop it with its own button first" : "Daily DG is already running"); return; }
+    if (!dgNextSel() && dgSelCount() > 0) dgForceSelected();   // done today but START pressed: run them again
     if (!dgNextSel() && !dgAutoGet()) { toast("Switch at least one dungeon ON first"); return; }
     dgArmed = true; dgBtnSync();
     dgRunQueue();

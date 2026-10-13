@@ -19,8 +19,8 @@
 //  Admin can also set/clear users/<uid>.expiresAt (timestamp) in the console at any time.
 //  IP LOCK: only FB.maxPerIp accounts can be created from one public IP (stored hashed in Firestore "ips").
 
-var APP_VERSION = 17;         // bump this on every release you publish (see AUTO UPDATE below) - must stay a whole number
-var APP_LABEL = "10.7";         // what the panel shows; the updater compares APP_VERSION only
+var APP_VERSION = 18;         // bump this on every release you publish (see AUTO UPDATE below) - must stay a whole number
+var APP_LABEL = "10.8";         // what the panel shows; the updater compares APP_VERSION only
 var GW = 2093, GH = 1177;
 var store = storages.create("cabal_respawn_redfinger");
 
@@ -328,6 +328,52 @@ function noteSrv(res) {
   } catch (e) {}
 }
 var fbWarned = false, fbSeq = 0;
+// Snapshot of this panel for the owner's MONITOR: a compact tree of the widgets that are on screen (text, colours, switches)
+// so the owner sees the same panel. Password boxes are masked; the sub-password, tokens, login form and owner box are skipped.
+function dumpPanel() {
+  var dm = context.getResources().getDisplayMetrics(), den = dm.density, sden = dm.scaledDensity, n = 0, skipV = [];
+  ["ipin", "ghtok", "ilock", "ilock2", "inewpass", "icode", "keyPanel", "lockBox"].forEach(function (id) { try { var x = V(id); if (x) skipV.push(x); } catch (e) {} });
+  var logV = null, bodyV = null;
+  try { logV = V("logv"); } catch (e) {}
+  try { bodyV = V("bodyScroll"); } catch (e) {}
+  function skip(v) { for (var i = 0; i < skipV.length; i++) if (skipV[i].equals(v)) return true; return false; }
+  function bgOf(v) { try { var bd = v.getBackground(); if (bd && String(bd.getClass().getSimpleName()) === "ColorDrawable") return Number(bd.getColor()); } catch (e) {} return null; }
+  function isPass(v) { try { var it = Number(v.getInputType()), c = it & 15, vr = it & 4080; return (c === 1 && (vr === 128 || vr === 144 || vr === 224)) || (c === 2 && vr === 16); } catch (e) { return true; } }
+  function dv(v, depth) {
+    if (n > 170 || depth > 14) return null;
+    try {
+      if (skip(v)) return null;
+      if (Number(v.getVisibility()) !== 0 && !(bodyV && v.equals(bodyV))) return null;       // the settings body is shown even when the user collapsed it
+      var o = {}, bg = bgOf(v), lp = v.getLayoutParams();
+      if (bg !== null) o.g = bg;
+      if (lp) { var wd = Number(lp.width); if (wd > 0) o.pw = Math.round(wd / den); var wt = lp.weight; if (wt !== undefined && Number(wt) > 0) o.w = Number(wt); }
+      var cn = String(v.getClass().getSimpleName());
+      if (v.getChildCount !== undefined) {
+        var kids = [];
+        for (var i = 0; i < v.getChildCount(); i++) { var c = dv(v.getChildAt(i), depth + 1); if (c) kids.push(c); }
+        if (!kids.length) return null;
+        n++;
+        o.o = (cn.indexOf("Linear") >= 0 && Number(v.getOrientation()) === 0) ? 0 : 1;
+        o.c = kids;
+        return o;
+      }
+      var k = /Switch/i.test(cn) ? "s" : /Edit|Input/i.test(cn) ? "i" : /Button/i.test(cn) ? "b" : (v.getText !== undefined ? "t" : "");
+      if (!k) return null;
+      var tx = String(v.getText());
+      if (k === "i" && isPass(v)) tx = tx ? "\u2022\u2022\u2022\u2022" : "";
+      if (logV && v.equals(logV)) { tx = tx.split("\n").filter(function (l) { return !/\bpin\b|password/i.test(l); }).slice(-12).map(function (l) { return l.slice(0, 100); }).join("\n"); o.m = 1; }
+      if (k === "t" && !tx) return null;
+      n++;
+      o.k = k; o.x = tx.slice(0, 160);
+      o.tc = Number(v.getCurrentTextColor());
+      o.sz = Math.round(Number(v.getTextSize()) / sden * 10) / 10;
+      if (k === "s") o.ch = !!v.isChecked();
+      if ((Number(v.getGravity()) & 7) === 1) o.gc = 1;
+      return o;
+    } catch (e) { return null; }
+  }
+  return dv(V("rootP"), 0);
+}
 function panelJson() {                  // read-only copy of this panel for the owner's MONITOR (never includes the sub-password / tokens)
   function g(f, d) { try { return f(); } catch (e) { return d; } }
   var o = { at: Date.now(), v: APP_LABEL, n: APP_VERSION,
@@ -336,9 +382,11 @@ function panelJson() {                  // read-only copy of this panel for the 
     game: g(function () { return C.game; }, ""),
     dev: g(function () { return device.brand + " " + device.model + " / Android " + device.release + " / " + device.width + "x" + device.height; }, ""),
     set: g(function () { var c = {}; ["x", "y", "check", "wait", "dx", "dy", "openWait", "vSlot", "pkg", "pkgRA", "autoFit", "autoCheck", "showConsole", "autoOpen", "autoEnter", "autoPopup"].forEach(function (k) { c[k] = C[k]; }); return c; }, {}),
+    ui: g(dumpPanel, null),
     log: g(function () { return logLines.filter(function (l) { return !/\bpin\b|password/i.test(l); }).slice(-20).map(function (l) { return String(l).slice(0, 110); }); }, []) };
   var j = JSON.stringify(o);
-  while (j.length > 6000 && o.log.length) { o.log.shift(); j = JSON.stringify(o); }
+  while (j.length > 11000 && o.log.length) { o.log.shift(); j = JSON.stringify(o); }
+  if (j.length > 11000) { o.ui = null; j = JSON.stringify(o); }
   return j;
 }
 function fbPush(state) {
@@ -4360,6 +4408,38 @@ function monExtend(days) {
   var base = Math.max(nowMs(), (monInfo && monInfo.exp) || 0);
   return fsDoc("users/" + monUid, { expiresAt: { ts: new Date(base + days * 86400000).toISOString() } });
 }
+function monBuild(nd, ctx, den) {                // rebuild one snapshot node as a real (non-interactive) view
+  var LL = android.widget.LinearLayout, Color = android.graphics.Color;
+  function dp(x) { return Math.round(x * den); }
+  if (nd.c) {
+    var g = new LL(ctx); g.setOrientation(nd.o === 0 ? 0 : 1);
+    if (nd.g !== undefined) { g.setBackgroundColor(nd.g); g.setPadding(dp(4), dp(4), dp(4), dp(4)); }
+    var hz = nd.o === 0;
+    nd.c.forEach(function (ch) {
+      var cv = monBuild(ch, ctx, den);
+      var wpx = ch.pw ? dp(ch.pw) : (hz ? (ch.w ? 0 : -2) : -1);
+      var lp = new LL.LayoutParams(wpx, -2, ch.w || 0);
+      if (!hz) lp.setMargins(0, dp(2), 0, 0); else lp.setMargins(dp(1), 0, dp(1), 0);
+      cv.setLayoutParams(lp);
+      g.addView(cv);
+    });
+    return g;
+  }
+  var tv;
+  if (nd.k === "s") {
+    tv = new android.widget.Switch(ctx);
+    tv.setChecked(!!nd.ch);
+    tv.setOnTouchListener(function () { return true; });          // looks like the panel, but the owner can't flip the user's switches
+  } else tv = new android.widget.TextView(ctx);
+  tv.setText(String(nd.x || "")); tv.setTextColor(nd.tc); tv.setTextSize(nd.sz || 11);
+  if (nd.g !== undefined) tv.setBackgroundColor(nd.g);
+  if (nd.k === "b") { tv.setGravity(android.view.Gravity.CENTER); tv.setPadding(dp(4), dp(9), dp(4), dp(9)); }
+  else if (nd.k === "i") { tv.setPaintFlags(tv.getPaintFlags() | 8); tv.setPadding(dp(4), dp(5), dp(4), dp(5)); }
+  else if (nd.k === "s") tv.setPadding(dp(2), dp(4), dp(2), dp(4));
+  else { tv.setPadding(dp(2), dp(1), dp(2), dp(1)); if (nd.gc) tv.setGravity(android.view.Gravity.CENTER_HORIZONTAL); }
+  if (nd.m) tv.setTypeface(android.graphics.Typeface.MONOSPACE);
+  return tv;
+}
 function monRender() {
   if (!monw) return;
   var box = monw.monItems, d = context.getResources().getDisplayMetrics().density, Color = android.graphics.Color;
@@ -4409,10 +4489,19 @@ function monRender() {
           btn("EXPIRE NOW", "#7a2a2a", function () { monAct("EXPIRE NOW", true, function () { return fsDoc("users/" + monUid, { expiresAt: { ts: new Date(nowMs() - 1000).toISOString() } }); }, "Account expired"); }) ]);
     if (monInfo && monInfo.panel) {
       var pn = monInfo.panel, st = pn.set || {}, oo = function (b) { return b ? "ON" : "off"; };
-      add("USER PANEL  v" + pn.v + "  (snapshot " + agoText(pn.at) + ")", "#4fc3e8", 11);
+      add("USER PANEL  v" + pn.v + "  (snapshot " + agoText(pn.at) + ", read-only)", "#4fc3e8", 11);
+      if (pn.ui) {
+        try {
+          var pv = monBuild(pn.ui, context, d);
+          var plp = new android.widget.LinearLayout.LayoutParams(-1, -2); plp.setMargins(Math.round(4 * d), Math.round(2 * d), Math.round(4 * d), Math.round(4 * d));
+          pv.setLayoutParams(plp);
+          box.addView(pv);
+        } catch (e) { add("can't draw the panel: " + e, "#ff8a80", 10); }
+      } else {
       add("Status:  " + (pn.run ? "RUNNING" : "IDLE") + "   respawn " + oo(pn.resp) + "   dungeon " + oo(pn.dg) + "   screen capture " + oo(pn.cap) + "\nGame: " + pn.game + "\nPhone: " + pn.dev, "#e8ecf5", 10, null, true);
       add("Settings:\n x/y " + st.x + "," + st.y + "   dx/dy " + st.dx + "," + st.dy + "\n check " + st.check + "ms   wait " + st.wait + "ms   load wait " + st.openWait + "ms\n veradrix slot " + st.vSlot + "   pkg '" + (st.pkg || "auto") + "'  pkgRA '" + (st.pkgRA || "auto") + "'\n auto fit " + oo(st.autoFit) + "   auto check " + oo(st.autoCheck) + "   console " + oo(st.showConsole) + "\n auto open " + oo(st.autoOpen) + "   auto enter " + oo(st.autoEnter) + "   auto popups " + oo(st.autoPopup), "#e8ecf5", 10, null, true);
       add("Panel log (last lines):\n" + (pn.log && pn.log.length ? pn.log.join("\n") : "(empty)"), "#9fe6a0", 9, null, true);
+      }
       add("Cloud events:", "#4fc3e8", 11);
     } else if (monInfo) add("No panel snapshot yet - the user needs script v" + APP_LABEL + " or newer.", "#6f778a", 11);
     monEvents.forEach(function (e) {

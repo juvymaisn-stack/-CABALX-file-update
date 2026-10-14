@@ -8,9 +8,9 @@
 //  QUIT closes the panel and ends the script.
 //  LOGIN: the panel needs a username + password. First run creates the first account;
 //  more users are added in settings (USERS). LOGOUT locks the panel again.
-//  DEVICE LOCK: with Firebase on, an account is locked to the device it was created on
-//  (older accounts lock to the first device that logs in). Other devices are refused.
-//  To move an account: delete the "deviceId" field on users/<uid> in the Firebase console.
+//  DEVICE LIMIT: with Firebase on, one account can be used on up to MAX_DEVICES (10) devices. The first device
+//  that logs in is added to the list, each new device is added until the list is full, then more are refused.
+//  The list is kept in the "deviceId" field on users/<uid> (comma separated). To reset it: delete that field.
 //  KEY FIRST: the key box is the first field; login needs one of the account's own keys (or a fresh key).
 //  OWNER PANEL: set admin = true (boolean) on your own users/<uid> doc in the console; after login a
 //  GENERATE KEYS panel appears in the settings list (makes + copies keys, writes them to Firestore).
@@ -19,8 +19,8 @@
 //  Admin can also set/clear users/<uid>.expiresAt (timestamp) in the console at any time.
 //  IP LOCK: only FB.maxPerIp accounts can be created from one public IP (stored hashed in Firestore "ips").
 
-var APP_VERSION = 32;         // bump this on every release you publish (see AUTO UPDATE below) - must stay a whole number
-var APP_LABEL = "12.2";         // what the panel shows; the updater compares APP_VERSION only
+var APP_VERSION = 33;         // bump this on every release you publish (see AUTO UPDATE below) - must stay a whole number
+var APP_LABEL = "12.3";         // what the panel shows; the updater compares APP_VERSION only
 var GW = 2093, GH = 1177;
 var store = storages.create("cabal_respawn_redfinger");
 
@@ -506,7 +506,7 @@ function fbStart() {
           var a = fbPullAccount();
           if (a) {
             acctExp = a.exp; acctAdmin = a.admin;
-            if (!a.admin && a.bound && a.bound !== myDeviceId()) { kickOut("Account locked to another device"); return; }
+            if (!a.admin && a.bound && devTryAdd(a.bound, myDeviceId()) === "FULL") { kickOut("This account is already used on " + MAX_DEVICES + " devices"); return; }
             if (a.watch && nowMs() - a.watch < 90000) liveUntil = Date.now() + 90000;   // the owner has this panel open: poll fast
             if (ownerCmd(a)) return;
           }
@@ -2649,12 +2649,30 @@ function fbPullAccount() {              // {bound: deviceId, exp: ms} or null wh
   } catch (e) { return null; }
 }
 // after sign-in: returns "OK" (this device is allowed / now bound), "OTHER" (locked to another device) or "NETWORK"
+var MAX_DEVICES = 10;                   // one account may be used on up to this many devices
+function devList(s) {                   // "id1,id2,..." (the deviceId field) -> array of ids
+  var o = [], p = String(s || "").split(","), i, t;
+  for (i = 0; i < p.length; i++) { t = p[i].replace(/\s+/g, ""); if (t) o.push(t); }
+  return o;
+}
+function devTryAdd(bound, me) {         // "OK" = this device is in the list (added when there was room), "FULL" = limit reached, "FAIL" = could not write
+  var l = devList(bound);
+  if (l.indexOf(me) >= 0) return "OK";
+  if (l.length >= MAX_DEVICES) return "FULL";
+  l.push(me);
+  try {
+    var r = fbCommit([fsDoc("users/" + fbAuth.uid, { deviceId: l.join(",") }, [])]);
+    if (r && r.statusCode < 300) return "OK";
+    log("device list update failed" + (r ? " (HTTP " + r.statusCode + ")" : "") + " - the Firestore rules must let a user update his own deviceId");
+    return "FAIL";
+  } catch (e) { return "FAIL"; }
+}
 function fbDeviceCheck() {
   var me = myDeviceId(), a = fbPullAccount();
   if (!a) return "NETWORK";             // can't verify -> fail closed
   acctExp = a.exp; acctAdmin = a.admin;
   if (a.admin) return "OK";              // owner accounts are not tied to one device (the APK and AutoX.js report different device ids)
-  if (a.bound) return a.bound === me ? "OK" : "OTHER";
+  if (a.bound) { var dr = devTryAdd(a.bound, me); return dr === "OK" ? "OK" : dr === "FULL" ? "OTHER" : "NETWORK"; }
   try {
     var r = fbCommit([fsDoc("users/" + fbAuth.uid, { deviceId: me }, [])]);   // first login on this account = lock it here
     return (r && r.statusCode < 300) ? "OK" : "NETWORK";
@@ -5097,7 +5115,7 @@ function monFetch() {
       monEvents = ev;
       var r3 = fsGetJson("users/" + monUid);
       if (r3.j) { var uf = r3.j.fields || {}; var pj = null; try { pj = JSON.parse(fsStr(uf, "panel")); } catch (e) {}
-        monInfo = { exp: fsTs(uf, "expiresAt"), dev: !!fsStr(uf, "deviceId"), cmd: fsStr(uf, "cmd"), admin: !!(uf.admin && uf.admin.booleanValue === true), panel: pj }; }
+        monInfo = { exp: fsTs(uf, "expiresAt"), dev: !!fsStr(uf, "deviceId"), devN: devList(fsStr(uf, "deviceId")).length, cmd: fsStr(uf, "cmd"), admin: !!(uf.admin && uf.admin.booleanValue === true), panel: pj }; }
     }
   }
   monMsg = msg;
@@ -5179,7 +5197,7 @@ function monRender() {
   } else {
     monw.monTitle.setText("LOG: " + monName + "  (drag)");
     add("\u2190 back to all users", "#6ea8ff", 12, function () { monUid = ""; monInfo = null; monMsg = ""; monw.monItems.removeAllViews(); threads.start(monFetch); });
-    if (monInfo) add("Expires: " + (monInfo.exp ? new Date(monInfo.exp).toLocaleDateString() : "no expiry") + "   Device: " + (monInfo.dev ? "locked" : "free") + (monInfo.cmd ? "   cmd pending: " + monInfo.cmd : ""), "#cfe3ff", 11);
+    if (monInfo) add("Expires: " + (monInfo.exp ? new Date(monInfo.exp).toLocaleDateString() : "no expiry") + "   Devices: " + (monInfo.devN || 0) + "/" + MAX_DEVICES + (monInfo.cmd ? "   cmd pending: " + monInfo.cmd : ""), "#cfe3ff", 11);
     function btn(label, color, fn) {
       var tv = new android.widget.TextView(context);
       tv.setText(label); tv.setTextColor(Color.WHITE); tv.setTextSize(10); tv.setGravity(android.view.Gravity.CENTER);
@@ -5536,7 +5554,7 @@ function doLogin() {
       if (dev !== "OK") {
         fbDrop();
         ui.run(function () { V("ilock").setText(""); });
-        toast(dev === "OTHER" ? "This account is locked to another device" : "Can't verify device - check connection");
+        toast(dev === "OTHER" ? "This account is already used on " + MAX_DEVICES + " devices" : "Can't verify device - check connection");
         return;
       }
       if (FB.requireKey && !acctAdmin) {            // owner (admin) accounts need no key

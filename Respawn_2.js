@@ -997,7 +997,7 @@ function checkUpdate(manual) {
 // =====================================================================================================
 // Uploads this script's file from the phone to a PUBLIC GitHub repo (commit-pinned raw link), checks the link serves the
 // same bytes, then writes config/respawn (version / url / sha256) so every copy of this script updates itself.
-function closeOwner() { try { if (ow) ow.close(); } catch (e) {} ow = null; }
+function closeOwner() { closeFp(); try { if (ow) ow.close(); } catch (e) {} ow = null; }
 function ghPublish(repo, branch, rpath, file, tok) {      // returns a message for the owner
   if (!fbAuth) return "Log in first";
   if (!acctAdmin) return "Owner only";
@@ -1045,6 +1045,72 @@ function ghPublish(repo, branch, rpath, file, tok) {      // returns a message f
   if (!r || r.statusCode < 200 || r.statusCode >= 300) return "On GitHub, but writing " + REL_DOC + " failed" + (r ? " (HTTP " + r.statusCode + ")" : "") + " - are the admin rules set?";
   return "Published v" + ver + " - copies update within ~6 min";
 }
+// ----- file picker (UPLOAD button: fills "File on this phone") -----
+var fpw = null, fpDir = "/sdcard";
+function closeFp() { try { if (fpw) fpw.close(); } catch (e) {} fpw = null; }
+function fpRender() {
+  if (!fpw) return;
+  var box = fpw.fpItems, d = context.getResources().getDisplayMetrics().density, Color = android.graphics.Color;
+  function add(label, color, fn) {
+    var tv = new android.widget.TextView(context);
+    tv.setText(label); tv.setTextColor(Color.parseColor(color)); tv.setTextSize(12);
+    tv.setPadding(Math.round(8 * d), Math.round(9 * d), Math.round(8 * d), Math.round(9 * d));
+    tv.setOnClickListener(fn);
+    box.addView(tv);
+  }
+  box.removeAllViews();
+  try { fpw.fpPath.setText(fpDir); } catch (e) {}
+  var names = [], dirs = [], js = [];
+  try { names = files.listDir(fpDir) || []; } catch (e) {}
+  var base = (fpDir === "/" ? "" : fpDir) + "/";
+  for (var i = 0; i < names.length; i++) {
+    var n = String(names[i]), full = base + n;
+    try {
+      if (files.isDir(full)) dirs.push(n);
+      else if (/\.js$/i.test(n)) { var jf = new java.io.File(full); js.push({ n: n, full: full, kb: Math.round(jf.length() / 1024), t: jf.lastModified() }); }
+    } catch (e) {}
+  }
+  dirs.sort(function (a, b) { return a.toLowerCase() < b.toLowerCase() ? -1 : 1; });
+  js.sort(function (a, b) { return b.t - a.t; });                      // newest file first
+  if (fpDir !== "/") add("\u2191  .. (up)", "#6ea8ff", function () {
+    var pf = null; try { pf = new java.io.File(fpDir).getParent(); } catch (e) {}
+    fpDir = pf ? String(pf) : "/"; fpRender();
+  });
+  dirs.forEach(function (n) { add("\u25B8 " + n, "#e0b84a", function () { fpDir = base + n; fpRender(); }); });
+  js.forEach(function (f) {
+    add(f.n + "   " + f.kb + " KB   " + new Date(f.t).toLocaleDateString(), "#ffffff", function () {
+      try { if (ow) ow.ghfile.setText(f.full); } catch (e) {}
+      toast("Selected: " + f.n);
+      closeFp();
+    });
+  });
+  if (!dirs.length && !js.length) add("no folders or .js files here (or storage access is off)", "#6f778a", function () {});
+}
+function openFp() {
+  fpw = floaty.window(
+    <vertical w="300" bg="#F2111722" padding="4">
+      <horizontal gravity="center_vertical">
+        <text id="fpHdr" text="PICK SCRIPT FILE (drag here)" textColor="#6ea8ff" textSize="12sp" textStyle="bold" layout_weight="1" padding="6"/>
+        <text id="fpClose" text="X" textColor="#ffffff" textSize="16sp" textStyle="bold" padding="8"/>
+      </horizontal>
+      <text id="fpPath" text="" textColor="#8b93a7" textSize="10sp" padding="4"/>
+      <ScrollView h="280" bg="#0b0e13" marginTop="2"><vertical id="fpItems"/></ScrollView>
+      <text text="tap a .js file to select it (newest first)" textColor="#6f778a" textSize="9sp" padding="4"/>
+    </vertical>
+  );
+  fpw.setPosition(40, 120);
+  try { fpw.disableFocus(); } catch (e) {}
+  var fx0 = 0, fy0 = 0, fwx = 0, fwy = 0;
+  fpw.fpHdr.setOnTouchListener(function (view, event) {
+    switch (event.getAction()) {
+      case 0: fx0 = event.getRawX(); fy0 = event.getRawY(); fwx = fpw.getX(); fwy = fpw.getY(); return true;
+      case 2: fpw.setPosition(fwx + (event.getRawX() - fx0), fwy + (event.getRawY() - fy0)); return true;
+    }
+    return true;
+  });
+  fpw.fpClose.on("click", closeFp);
+  fpRender();
+}
 function openOwner() {
   if (!acctAdmin) { toast("Owner only - log in with the owner account first"); return; }
   if (ow) { closeOwner(); return; }
@@ -1065,13 +1131,14 @@ function openOwner() {
       </horizontal>
       <horizontal gravity="center_vertical">
         <input id="ghfile" hint="File on this phone" inputType="text" textColor="#f8fafc" textSize="12sp" padding="3" w="0" layout_weight="1"/>
-        <button id="pgFile" text="PASTE" textSize="9sp" w="52" h="30" padding="0" bg="#2f5fb3" textColor="#ffffff"/>
+        <button id="pgFile" text="UPLOAD" textSize="9sp" w="52" h="30" padding="0" bg="#3a4a6b" textColor="#ffffff"/>
       </horizontal>
       <horizontal gravity="center_vertical">
         <input id="ghtok" hint="GitHub token (Contents: write)" inputType="textPassword" textColor="#f8fafc" textSize="12sp" padding="3" w="0" layout_weight="1"/>
         <button id="pgTok" text="PASTE" textSize="9sp" w="52" h="30" padding="0" bg="#2f5fb3" textColor="#ffffff"/>
       </horizontal>
       <Switch id="swAuto" text="Auto sign in (owner)" textSize="11sp" textColor="#e2e8f0" marginTop="2"/>
+      <button id="btnGhSave" text="SAVE" textSize="10sp" h="32" padding="0" bg="#2f7d4a" textColor="#ffffff" marginTop="3"/>
       <button id="btnGhPub" text="PUBLISH TO GITHUB" textSize="10sp" h="34" padding="0" bg="#24292f" textColor="#ffffff" marginTop="3"/>
       <button id="btnGhRel" text="RELEASE LATEST PATCH" textSize="10sp" h="34" padding="0" bg="#7a5a1a" textColor="#ffffff" marginTop="2"/>
       <button id="btnOwClose" text="CLOSE" textSize="10sp" h="30" padding="0" bg="#2d2d3a" textColor="#e2e8f0" marginTop="2"/>
@@ -1116,9 +1183,29 @@ function openOwner() {
   w.pgRepo.click(function () { pasteInto("ghrepo"); });
   w.pgBranch.click(function () { pasteInto("ghbranch"); });
   w.pgPath.click(function () { pasteInto("ghpath"); });
-  w.pgFile.click(function () { pasteInto("ghfile"); });
+  w.pgFile.click(function () {              // UPLOAD = pick the script file from this phone
+    try { w.disableFocus(); } catch (e) {}
+    if (fpw) { closeFp(); return; }         // the button toggles the picker
+    try { var pf = new java.io.File(String(w.ghfile.getText()).trim()).getParentFile(); if (pf && pf.isDirectory()) fpDir = String(pf.getAbsolutePath()); } catch (e) {}
+    openFp();
+  });
   w.pgTok.click(function () { pasteInto("ghtok"); });
   function out(msg) { toast(msg); ui.run(function () { try { if (ow) ow.ghOut.setText(msg); } catch (e) {} }); }
+  w.btnGhSave.click(function () {           // SAVE: keep repo / branch / path / file / token for next time (no publish)
+    try { w.disableFocus(); } catch (e) {}
+    var repo = String(w.ghrepo.getText()).trim(), branch = String(w.ghbranch.getText()).trim() || "main",
+        rpath = String(w.ghpath.getText()).trim().replace(/^\/+/, ""), file = String(w.ghfile.getText()).trim(),
+        tok = String(w.ghtok.getText()).trim();
+    if (repo && !/^[\w.-]+\/[\w.-]+$/.test(repo)) { toast("Repo must look like owner/name"); return; }
+    if (!/^[\w.\/-]+$/.test(branch)) { toast("Branch name has odd characters"); return; }
+    if (rpath && (!/^[\w.\/-]+\.js$/.test(rpath) || rpath.indexOf("..") >= 0)) { toast("Path in repo must be like Respawn_2.js"); return; }
+    var old = {}; try { old = JSON.parse(store.get("gh_cfg", "{}")); } catch (e) {}
+    var enc = tok ? credEnc(tok) : (old.tok || "");        // an empty token box keeps the token saved before
+    try {
+      store.put("gh_cfg", JSON.stringify({ repo: repo, branch: branch, path: rpath, file: file, tok: enc }));
+      toast("Saved" + (tok ? "" : (enc ? " (token kept)" : " (no token yet)")));
+    } catch (e) { toast("Save failed: " + e); }
+  });
   w.btnGhPub.click(function () {
     try { w.disableFocus(); } catch (e) {}
     if (!acctAdmin) { toast("Owner only - log in with the owner account first"); return; }

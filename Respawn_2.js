@@ -5,7 +5,7 @@
 //   X / Y inputs + TEST. Tap an input to type, press the keyboard Done to release focus.
 
 // ===== VERSION =====
-var APP_VERSION = 1;          // bump this on every release you publish (whole number)
+var APP_VERSION = 2;          // bump this on every release you publish (whole number)
 
 // ===== GAME SPACE =====
 var GW = 2093, GH = 1177;
@@ -148,8 +148,7 @@ function buildPanel() {
           <button id="btnQuit" text="QUIT" textSize="10sp" w="0" layout_weight="1" h="32" padding="0" bg="#7a2a2a" textColor="#ffffff"/>
         </horizontal>
         <horizontal marginTop="2">
-          <button id="btnSnapTap" text="SNAP TAP" textSize="10sp" w="0" layout_weight="1" h="32" padding="0" bg="#2d2d3a" textColor="#fbbf24"/>
-          <button id="btnSnapStart" text="SNAP BTN" textSize="10sp" w="0" layout_weight="1" h="32" padding="0" bg="#2d2d3a" textColor="#fbbf24"/>
+          <button id="btnSavePos" text="AUTO SAVE SPOT" textSize="10sp" w="0" layout_weight="1" h="32" padding="0" bg="#2d2d3a" textColor="#fbbf24"/>
         </horizontal>
         <horizontal marginTop="2">
           <button id="btnLogout" text="LOGOUT" textSize="9sp" w="0" layout_weight="1" h="32" padding="0" bg="#2d2d3a" textColor="#e2e8f0"/>
@@ -185,9 +184,8 @@ function buildPanel() {
   fw.btnRun.click(function () { releaseFocus(); if (running) stopBot(); else startBot(false); });
   fw.btnTest.click(function () { releaseFocus(); startBot(true); });
   fw.btnSave.click(function () { releaseFocus(); readCfgFromUi(); toast("Saved"); });
-  fw.btnSnapTap.click(function () { releaseFocus(); snapTemplate("tap"); });
-  fw.btnSnapStart.click(function () { releaseFocus(); snapTemplate("start"); });
   fw.btnQuit.click(function () { running = false; exit(); });
+  fw.btnSavePos.click(function () { releaseFocus(); autoSaveSpot(); });
   fw.btnLogout.click(function () { releaseFocus(); doLogout(); });
   fw.btnUpd.click(function () { releaseFocus(); toast("Checking for update (you have v" + APP_VERSION + ")..."); threads.start(function () { checkUpdate(true); }); });
   fw.btnOwner.click(function () { releaseFocus(); openOwner(); });
@@ -281,6 +279,57 @@ function snapTemplate(key) {
       log("saved " + key + " template " + w + "x" + h);
       toast("Saved " + key + " template");
     } catch (e) { log("snap err: " + e); }
+  });
+}
+
+// ===== AUTO SAVE SPOT =====
+// Opens the GPS map, finds the character marker, converts it to X/Y (inverse of coordToPoint),
+// fills the SAVED SPOT boxes and saves. Tune isMarker() if it picks the wrong thing (see the log).
+function isMarker(c) { var r = colors.red(c), g = colors.green(c), b = colors.blue(c); return r > 200 && g > 180 && b < 130; }
+function autoSaveSpot() {
+  if (running) { toast("Press STOP first, then AUTO SAVE SPOT"); return; }
+  threads.start(function () {
+    var hid = false;
+    try {
+      if (!capReady) { try { hasRoot = (shell("id", true).code === 0); } catch (e) { hasRoot = false; } setupCapture(); }
+      if (!capReady) { log("save spot: no screen capture"); toast("Allow screen capture first"); return; }
+      if (!METHODS.length) buildMethods();
+      ui.run(function () { fw.body.setVisibility(8); fw.btnMin.setText("\u25BC"); });   // hide panel so it doesn't cover the map
+      hid = true;
+      var opened = false;
+      for (var i = 0; i < 3 && !opened; i++) {
+        if (gpsOpen()) { opened = true; break; }
+        tapGame(P_OPEN_GPS, "open GPS");
+        sleep(1800);
+        opened = gpsOpen();
+      }
+      if (!opened) { log("save spot: GPS did not open"); toast("GPS did not open"); return; }
+      sleep(500);
+      var img = grab();
+      if (!img) { log("save spot: no image"); return; }
+      var sx = 0, sy = 0, n = 0;
+      for (var gx = MAP.l; gx <= MAP.r; gx += 3) {
+        for (var gy = MAP.t; gy <= MAP.b; gy += 3) {
+          if (isMarker(pix(img, [gx, gy]))) { sx += gx; sy += gy; n++; }
+        }
+      }
+      img.recycle();
+      if (n < 2 || n > 400) {
+        log("save spot: marker not found (" + n + " hits) - nothing changed");
+        toast("Marker not found - spot not changed");
+      } else {
+        var mx = sx / n, my = sy / n;
+        var X = clamp(Math.round((mx - CFG.MAP_DX - MAP.l) / (MAP.r - MAP.l) * MAP.max), 0, 255);
+        var Y = clamp(Math.round((MAP.b + CFG.MAP_DY - my) / (MAP.b - MAP.t) * MAP.max), 0, 255);
+        CFG.TARGET_X = X; CFG.TARGET_Y = Y;
+        for (var k in CFG) store.put(k, CFG[k]);
+        ui.run(function () { fw.inX.setText(String(X)); fw.inY.setText(String(Y)); });
+        log("save spot: saved X" + X + " Y" + Y + " (" + n + " hits)");
+        toast("Saved spot X" + X + " Y" + Y);
+      }
+      if (gpsOpen()) { tapGame(P_GPS_CLOSE, "close GPS"); sleep(600); }
+    } catch (e) { log("save spot err: " + e); }
+    if (hid) ui.run(function () { fw.body.setVisibility(0); fw.btnMin.setText("\u25B2"); });
   });
 }
 

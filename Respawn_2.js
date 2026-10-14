@@ -5,7 +5,7 @@
 //   X / Y inputs + TEST. Tap an input to type, press the keyboard Done to release focus.
 
 // ===== VERSION =====
-var APP_VERSION = 5;          // bump this on every release you publish (whole number)
+var APP_VERSION = 7;          // bump this on every release you publish (whole number)
 
 // ===== GAME SPACE =====
 var GW = 2093, GH = 1177;
@@ -890,6 +890,15 @@ function loginWith(name, pw, keyIn, silent) {
   try { fbCommit([fsDoc("users/" + fbAuth.uid, { name: name, email: email }, ["lastLogin"])]); } catch (e) {}
   startSession();
   ui.run(function () { closeLogin(); buildPanel(); refreshButtons(); });
+  try {                                    // an auto-update restarted us while the bot was running: start it again
+    var rr = store.get("resume_run", 0);
+    if (rr) {
+      store.remove("resume_run");
+      if (Date.now() - rr < 180000) {
+        threads.start(function () { sleep(2500); toast("Updated to v" + APP_VERSION + " - resuming"); startBot(false); });
+      }
+    }
+  } catch (e5) {}
   if (!silent) toast("Welcome, " + name);
   return true;
 }
@@ -1006,7 +1015,7 @@ function showLogin() {
 // ===== AUTO UPDATE (reads config/respawn, written by OWNER - PUBLISH below) =====
 // =====================================================================================================
 // A download is rejected (nothing changes) when the hash or the APP_VERSION inside the file does not match.
-// It never updates while the respawn script is running.
+// It installs even while the respawn script is running: the bot is stopped just before the restart and starts itself again.
 function checkUpdate(manual) {
   function say(m) { log("update: " + m); if (manual) toast(m); }
   if (updBusy) { if (manual) toast("Update check already running"); return; }
@@ -1021,7 +1030,6 @@ function checkUpdate(manual) {
     var url = (f.url && f.url.stringValue) || "", want = ((f.sha256 && f.sha256.stringValue) || "").toLowerCase();
     if (!ver || !url || want.length !== 64) { say("no valid update published (v" + APP_VERSION + ")"); return; }
     if (ver <= APP_VERSION) { say("already up to date (v" + APP_VERSION + ")"); return; }
-    if (running || (worker && worker.isAlive())) { say("v" + ver + " is ready - stop the script first, then press UPDATE"); return; }
     log("update: downloading v" + ver + " (you have v" + APP_VERSION + ")");
     var dl = http.get(url);
     if (dl.statusCode !== 200) { say("download failed (HTTP " + dl.statusCode + ")"); return; }
@@ -1043,6 +1051,12 @@ function checkUpdate(manual) {
         try { files.remove(tmp); } catch (e2) {}
       }
     } catch (e) { try { files.remove(tmp); } catch (e3) {} say("install failed (" + e + ") - keeping v" + APP_VERSION); return; }
+    var wasRunning = running || (worker && worker.isAlive());
+    if (wasRunning) {                      // stop the bot cleanly, remember to start it again after the restart
+      try { store.put("resume_run", Date.now()); } catch (e4) {}
+      running = false;
+      for (var w1 = 0; w1 < 50 && worker && worker.isAlive(); w1++) sleep(100);
+    }
     log("update: v" + ver + " installed - restarting");
     toast("Script updated to v" + ver + " - restarting");
     engines.execScriptFile(path, { delay: 2500 });

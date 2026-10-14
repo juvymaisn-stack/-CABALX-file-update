@@ -5,7 +5,7 @@
 //   X / Y inputs + TEST. Tap an input to type, press the keyboard Done to release focus.
 
 // ===== VERSION =====
-var APP_VERSION = 4;          // bump this on every release you publish (whole number)
+var APP_VERSION = 5;          // bump this on every release you publish (whole number)
 
 // ===== GAME SPACE =====
 var GW = 2093, GH = 1177;
@@ -57,7 +57,7 @@ function isOrange(c) { var r = colors.red(c), g = colors.green(c), b = colors.bl
 
 // ===== UI (small floating panel) =====
 var fw = null;
-var IDS = ["inX", "inY", "inDX", "inDY", "inCheck", "inWait"];
+var IDS = ["inX", "inY", "inDX", "inDY", "inCheck", "inWait", "inSub"];
 
 function num(v, d) { var n = parseFloat(String(v)); return isNaN(n) ? d : n; }
 function clamp(n, lo, hi) { return Math.max(lo, Math.min(hi, n)); }
@@ -71,6 +71,7 @@ function loadCfgToUi() {
     fw.inDY.setText(String(CFG.MAP_DY));
     fw.inCheck.setText(String(CFG.CHECK_EVERY));
     fw.inWait.setText(String(CFG.AFTER_RESPAWN_WAIT));
+    fw.inSub.setText(getSubPass());
     fw.cbAuto.setChecked(!!CFG.AUTO_CHECK);
     fw.cbConsole.setChecked(!!CFG.SHOW_CONSOLE);
   });
@@ -86,7 +87,15 @@ function readCfgFromUi() {
   CFG.AUTO_CHECK = fw.cbAuto.isChecked();
   CFG.SHOW_CONSOLE = fw.cbConsole.isChecked();
   for (var k in CFG) store.put(k, CFG[k]);
+  saveSubPass(txt(fw.inSub).trim());      // empty box = clear the saved sub-password
   loadCfgToUi();
+}
+// Sub-password: kept scrambled with the per-device key (same as the saved login), never in CFG / plain text.
+function getSubPass() {
+  try { var raw = store.get("sub_pass", ""); return raw ? credDec(raw) : ""; } catch (e) { return ""; }
+}
+function saveSubPass(v) {
+  try { if (v) store.put("sub_pass", credEnc(v)); else store.remove("sub_pass"); } catch (e) { log("sub-password save err: " + e); }
 }
 function releaseFocus() { try { fw.disableFocus(); } catch (e) {} }
 
@@ -140,6 +149,8 @@ function buildPanel() {
             <input id="inDY" inputType="numberDecimal|numberSigned" textColor="#f8fafc" textSize="12sp" padding="2" text="0"/>
           </vertical>
         </horizontal>
+        <text text="SUB-PASSWORD" textSize="10sp" textColor="#64a8ff" textStyle="bold" marginTop="3"/>
+        <input id="inSub" inputType="numberPassword" hint="saved on this phone only" textColor="#f8fafc" textSize="12sp" padding="2"/>
         <Switch id="cbAuto" text="Tap AUTO only if off" textSize="11sp" textColor="#e2e8f0" marginTop="3"/>
         <Switch id="cbConsole" text="Show console" textSize="11sp" textColor="#e2e8f0" marginTop="2"/>
         <horizontal marginTop="2">

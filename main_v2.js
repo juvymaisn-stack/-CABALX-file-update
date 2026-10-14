@@ -19,8 +19,8 @@
 //  Admin can also set/clear users/<uid>.expiresAt (timestamp) in the console at any time.
 //  IP LOCK: only FB.maxPerIp accounts can be created from one public IP (stored hashed in Firestore "ips").
 
-var APP_VERSION = 31;         // bump this on every release you publish (see AUTO UPDATE below) - must stay a whole number
-var APP_LABEL = "12.1";         // what the panel shows; the updater compares APP_VERSION only
+var APP_VERSION = 32;         // bump this on every release you publish (see AUTO UPDATE below) - must stay a whole number
+var APP_LABEL = "12.2";         // what the panel shows; the updater compares APP_VERSION only
 var GW = 2093, GH = 1177;
 var store = storages.create("cabal_respawn_redfinger");
 
@@ -494,6 +494,7 @@ function ownerCmd(a) {                  // run a command the owner left on this 
   return false;
 }
 function fbStart() {
+  try { npcWatchStart(); } catch (en) {}
   if (fbThread) { try { fbThread.interrupt(); } catch (e) {} }
   fbThread = threads.start(function () {
     var beatN = 0, lastPushed = null;
@@ -1313,7 +1314,14 @@ function snap() {
   }
   return null;
 }
-function grab() {
+var CAP_LOCK = new java.util.concurrent.locks.ReentrantLock();
+function grab() {                                    // one capture at a time: two threads asking for a frame at once can recycle each other's image
+  var got = false;
+  try { got = CAP_LOCK.tryLock(4000, java.util.concurrent.TimeUnit.MILLISECONDS); } catch (e) { if (DBG.isStop(e)) throw e; got = false; }
+  if (!got) return null;
+  try { return grabInner(); } finally { try { CAP_LOCK.unlock(); } catch (eu) {} }
+}
+function grabInner() {
   var img = null;
   if (capMode === "projection") {
     try { img = snap(); } catch (e) { img = null; }
@@ -1334,7 +1342,11 @@ function grab() {
     if (vk !== VIEW_KEY) { VIEW_KEY = vk; VIEW = null; VIEW_OK = false; needFit = true; DEVICE = null; }   // rotated / resized (DEVICE re-read: emulator resolution may have changed)
     if (needFit && C.autoFit && LAND) {
       needFit = false;
-      try { applyView(detectView(img, w0, h0)); } catch (e) { log("fit err: " + e); }
+      try {
+        var nv = detectView(img, w0, h0);
+        if (VIEW_OK && VIEW && !nv.ok) { /* a good game area is already known: a failed re-measure (e.g. our own hidden-panel dot was the active window) must not replace it */ }
+        else applyView(nv);
+      } catch (e) { log("fit err: " + e); }
     }
   }
   return img;
@@ -1660,7 +1672,7 @@ function returnToSpot() {
 
 // respawn
 function respawn() {
-  log("DEAD -> respawn");
+  log("DEAD -> respawn" + (hideSleeping ? " (panel hidden)" : ""));
   needReturn = true;
   autoBlindDone = false; autoOffCount = 0; autoBackoff = 0; autoLastTap = 0;   // dying switched AUTO off: tap it again after the return
   sleep(600);
@@ -1912,12 +1924,16 @@ function reportGameCrash(pkg, dead, lastPkg) {
   gameUpAt = 0;
   log("GAME CRASH #" + gameCrashes + " " + gameName() + " [" + pkg + "] " + how + " | up " + up + " | free RAM " + freeRamText() + (det ? " | " + det : ""));
 }
-function curPkg() {
-  try {                                   // live window first: currentPackage() can stay stale after the app closes
-    var root = auto.root;
-    if (root) { var n = String(root.packageName() || ""); if (n) return n; }
-  } catch (e) {}
-  try { return String(currentPackage() || ""); } catch (e) { return ""; }
+var ownPkg = "", lastFgPkg = "";
+try { ownPkg = String(context.getPackageName()); } catch (e) {}
+function curPkg() {                       // live window first: currentPackage() can stay stale after the app closes
+  var n = "";
+  try { var root = auto.root; if (root) n = String(root.packageName() || ""); } catch (e) {}
+  if (!n) { try { n = String(currentPackage() || ""); } catch (e) { n = ""; } }
+  // the hidden-panel wake dot is OUR window: if it takes the "active window" slot the game is still what is on screen
+  if (n && ownPkg && n === ownPkg && hideSleeping && lastFgPkg) return lastFgPkg;
+  if (n && n !== ownPkg) lastFgPkg = n;
+  return n;
 }
 function ensureGame() {   // returns "none" | "open" | "launched"
   var pkg = findCabalPkg();
@@ -3303,6 +3319,80 @@ var DG_LOAD_WAIT = 20000;                       // max ms to wait for the dungeo
 var P_DG_CENTER = [1046, 588];                  // town: tap the centre of the screen (the dungeon gate) to open Select Dungeon
 var R_DG_ENTER = [1240, 1062, 1500, 1078];      // Select Dungeon: always-blue band inside the "200 enter" button (screen detector)
 var R_DG_TIMER = [1612, 160, 1750, 200];        // in dungeon: cyan countdown timer, top right (right-edge anchored)
+// ===== NPC popup (Boss Area Warp / Middle Area Warp / ...): two rows "Let's go" / "Let's wait" -> ALWAYS press "Let's go" =====
+// Found by picture, no template files: dark navy panel on the left + light-blue text in BOTH rows. Positions are design coords, left anchored.
+var R_NPC_PANEL = [75, 378, 655, 705], R_NPC_ROW1 = [138, 749, 252, 793], R_NPC_ROW2 = [138, 852, 270, 896];
+var P_NPC_GO = [366, 769, "L"];                       // centre of the "Let's go" row
+var npcLastTap = 0;
+function isNpcNavy(c) { var r = colors.red(c), g = colors.green(c), b = colors.blue(c); return b > 35 && b > r + 12 && r < 50 && g < 60; }
+function isNpcText(c) { var r = colors.red(c), g = colors.green(c), b = colors.blue(c); return b > 170 && g > 120 && (b - r) > 35; }
+// ===== "Guild treasure achieve condition met" popup (Gained / Cancel): ALWAYS press Gained =====
+// Found by picture: blue Gained button + grey Cancel button + white title line, centred popup. Design coords (centre anchored).
+var R_GT_GAINED = [648, 889, 1038, 965], R_GT_CANCEL = [1057, 889, 1443, 965], R_GT_TITLE = [698, 205, 1374, 262];
+var P_GT_GAINED = [843, 927];
+var gtLastTap = 0;
+function isGtBlue(c) { var r = colors.red(c), b = colors.blue(c); return b > 110 && (b - r) > 45 && r < 110; }
+function isGtGrey(c) { var r = colors.red(c), g = colors.green(c), b = colors.blue(c); return r > 60 && r < 120 && g > 65 && g < 125 && b > 90 && b < 140 && (b - r) >= 12 && (b - r) <= 40; }
+function isGtWhite(c) { return Math.min(colors.red(c), colors.green(c), colors.blue(c)) > 190; }
+function gtGained(img) {                              // true = the popup was there and Gained was tapped
+  if (Date.now() - gtLastTap < 1500) return false;
+  if (fracIn(img, R_GT_GAINED, isGtBlue, 4) < 0.5) return false;
+  if (fracIn(img, R_GT_CANCEL, isGtGrey, 4) < 0.5) return false;
+  if (fracIn(img, R_GT_TITLE, isGtWhite, 3) < 0.05) return false;
+  gtLastTap = Date.now();
+  log("Guild treasure popup -> Gained");
+  tapGame(P_GT_GAINED, "Guild treasure Gained");
+  return true;
+}
+// ===== DUNGEON REWARD SCREENS: Bonus SP (Roll) -> Earned SP (Exit) -> Dungeon Clear (Exit) =====
+// Found by picture (button colour + title text), design coords centre anchored. Same button spot for Roll / SP Exit.
+var R_RW_BTN = [928, 880, 1168, 950], R_RW_TITLE = [948, 297, 1148, 332], P_RW_BTN = [1046, 914];
+var R_DC_LEAVE = [628, 955, 998, 1040], R_DC_EXIT = [1098, 955, 1468, 1040], R_DC_TITLE = [858, 285, 1238, 325], P_DC_EXIT = [1280, 998];
+var rwLastTap = 0, dgClearAt = 0;
+function isRwOrange(c) { var r = colors.red(c), g = colors.green(c), b = colors.blue(c); return r > 120 && g > 80 && g < 130 && b > 30 && b < 85 && (r - b) > 65; }
+function rewardStep(img) {                            // true = a reward screen was there and its button was tapped
+  if (Date.now() - rwLastTap < 1200) return false;
+  var title = fracIn(img, R_RW_TITLE, isGtWhite, 3);
+  if (title >= 0.08) {
+    if (fracIn(img, R_RW_BTN, isRwOrange, 4) >= 0.6) { rwLastTap = Date.now(); log("Bonus SP -> Roll"); tapGame(P_RW_BTN, "Bonus SP Roll"); return true; }
+    if (fracIn(img, R_RW_BTN, isGtBlue, 4) >= 0.6) { rwLastTap = Date.now(); log("Bonus SP earned -> Exit"); tapGame(P_RW_BTN, "Bonus SP Exit"); return true; }
+  }
+  if (fracIn(img, R_DC_TITLE, isGtWhite, 3) >= 0.15 && fracIn(img, R_DC_LEAVE, isGtGrey, 4) >= 0.6 && fracIn(img, R_DC_EXIT, isGtBlue, 4) >= 0.6) {
+    rwLastTap = Date.now(); dgClearAt = rwLastTap; log("Dungeon Clear -> Exit"); tapGame(P_DC_EXIT, "Dungeon Clear Exit"); return true;
+  }
+  return false;
+}
+function popupAnswers(img) { return gtGained(img) || rewardStep(img); }
+var npcDbgAt = 0, npcWatchOn = false;
+function npcLetsGo(img) {                             // true = the popup was there and "Let's go" was tapped
+  if (Date.now() - npcLastTap < 1500) return false;
+  var pn = fracIn(img, R_NPC_PANEL, isNpcNavy, 8, "L");
+  if (pn < 0.10) return false;
+  var t1 = fracIn(img, R_NPC_ROW1, isNpcText, 3, "L"), t2 = fracIn(img, R_NPC_ROW2, isNpcText, 3, "L");
+  if (t1 < 0.03 && t2 < 0.03) {                       // a dark panel but no "Let's go / Let's wait" text: say so (max every 8 s) so the thresholds can be tuned
+    if (Date.now() - npcDbgAt > 30000) { npcDbgAt = Date.now(); log("NPC check: panel " + pn.toFixed(2) + " but rows text " + t1.toFixed(2) + "/" + t2.toFixed(2) + " - not tapped"); }
+    return false;
+  }
+  npcLastTap = Date.now();
+  log("NPC popup -> Let's go (panel " + pn.toFixed(2) + ", rows " + t1.toFixed(2) + "/" + t2.toFixed(2) + ")");
+  tapGame(P_NPC_GO, "NPC Let's go");
+  return true;
+}
+function npcWatchStart() {                            // own thread: answers the popup whatever the script is doing (PLAY / RESPAWN / any DG run)
+  if (npcWatchOn) return;
+  npcWatchOn = true;
+  threads.start(function () {
+    while (true) {
+      try {
+        if (running && !rOn && !dgBusy) {          // the dungeon wait loop and the RESPAWN loop already answer these popups themselves
+          var im = grab();
+          if (im) { try { if (!popupAnswers(im) && fracIn(im, R_DG_TIMER, isCyan, 3, "R") > 0.04) npcLetsGo(im); } catch (e1) {} im.recycle(); }
+        }
+      } catch (e) {}
+      sleep(1300);
+    }
+  });
+}
 function isCyan(c) { return colors.green(c) > 170 && colors.blue(c) > 200 && colors.red(c) < 100; }
 
 // ===== DUNGEON ONLY: another quest -> keep tapping the boot button until the character has reached it =====
@@ -3430,11 +3520,14 @@ function dqAfterEnd() {
   }
 }
 function npAlways() { return dgBusy && (naOn || dgSrc === "NONPREM"); }   // NON PREM run: the quest panel is tapped non-stop
+var P_NA_QUEST2 = [1769, 327, "R"];                  // second spot: the quest description line under the title (alternates with P_NA_QUEST so one of them always lands on the quest text)
+var npTapN = 0;
 function npQuestTap() {                              // no AUTO DASH switch, no attack / quest / walking pauses: tap the quest panel every DQ_TAP_EVERY ms
   var now = Date.now();
   if (now - dqLastTap < DQ_TAP_EVERY) return;
   dqLastTap = now;
-  tapGame(P_NA_QUEST, "quest panel tap");
+  if (npTapN === 0) log("NON PREM DG: dungeon timer seen - quest panel taps running (every " + DQ_TAP_EVERY + " ms)");
+  tapGame((npTapN++ % 2) ? P_NA_QUEST2 : P_NA_QUEST, "quest panel tap");
   try { naEvAdd("tap"); } catch (e) {}
 }
 function dqKick() {
@@ -3446,13 +3539,12 @@ function dqKick() {
   dqBase = null; dqCand = null; dqMot = null; dqStill = 0; dqLastTap = 0; dqHold = 0; dqHeldLog = false; dqPrevAt = 0; dqTravel = Date.now();
   log("dungeon started -> boot button to the first quest");
 }
-function dqLook() {
-  if (!dashOn()) return;                              // for the RESPAWN loop (dungeons you run by hand): one look, only inside a dungeon
+function dqLook() {                                   // for the RESPAWN loop (dungeons you run by hand): one look, only inside a dungeon
   if (Date.now() - dqLastLook < (dqTravel ? 600 : 1500)) return;
   dqLastLook = Date.now();
   var im = grab();
   if (!im) return;
-  try { if (fracIn(im, R_DG_TIMER, isCyan, 3, "R") > 0.04) dqWatch(im); else dqReset(); } catch (e) {}
+  try { if (popupAnswers(im)) { im.recycle(); return; } if (fracIn(im, R_DG_TIMER, isCyan, 3, "R") > 0.04) { if (!npcLetsGo(im) && dashOn()) dqWatch(im); } else if (dashOn()) dqReset(); } catch (e) {}
   im.recycle();
 }
 var R_DG_REPEAT = [986, 1075, 1038, 1128], R_DG_ITEM = [1648, 1055, 2048, 1145], R_DG_CHAL = [596, 842, 1038, 918];
@@ -3627,12 +3719,14 @@ function dgAfterChallenge(it) {
 // The dungeon is over when the cyan countdown timer (top right) has been gone for DG_END_ABSENT ms in a row
 // (the game sends you back to town). Only counts after the timer has been seen at least once.
 function dgWaitFinish() {
-  var seen = false, absentSince = 0, t0 = Date.now(), cap = (naOn && naCap) ? naCap : DG_MAX_RUN;
+  var seen = false, absentSince = 0, t0 = Date.now(), cap = (naOn && naCap) ? naCap : DG_MAX_RUN, noTimerWarned = false;
+  npTapN = 0; dgClearAt = 0;
   while (Date.now() - t0 < cap) {
     sleep(dqTravel ? 500 : 2000); dgChk();                      // look often while the boot is being tapped
     var im = grab();
     if (!im) continue;
     var has = fracIn(im, R_DG_TIMER, isCyan, 3, "R") > 0.04;
+    try { if (popupAnswers(im) || npcLetsGo(im)) { if (seen) absentSince = Date.now(); im.recycle(); continue; } } catch (en) {}     // NPC popup (Let's go / Let's wait): always Let's go
     if (has && !seen) { try { dqKick(); } catch (ek) {} }               // first quest of the dungeon: boot right away
     if (has) { try { if (npAlways()) npQuestTap(); else dqWatch(im); } catch (eq) {} } else dqReset();     // dungeon only: NON PREM taps the quest panel non-stop, DAILY DG watches for a new quest -> boot button
     im.recycle();
@@ -3640,8 +3734,9 @@ function dgWaitFinish() {
       if (!seen) { try { DBG.dgMark("ENTERED", "dungeon timer seen"); } catch (e) {} }
       seen = true; absentSince = 0;
     }
-    else if (seen) { if (!absentSince) absentSince = Date.now(); if (Date.now() - absentSince >= DG_END_ABSENT) { if (dgCur && !naOn) { try { store.put("dg_done_" + dgCur, dayKey()); } catch (e) {} } try { if (!naOn) dqAfterEnd(); } catch (ea) { if (String(ea) === "cancelled") throw ea; } return true; } }
-    else if (Date.now() - t0 > 60000) { log("DAILY DG: dungeon timer never appeared (the entry tap was not detected) - skipping to the next dungeon"); return "skip"; }
+    else if (seen) { if (!absentSince) absentSince = Date.now(); if (Date.now() - absentSince >= DG_END_ABSENT || (dgClearAt && Date.now() - dgClearAt >= 3500)) { if (dgCur && !naOn) { try { store.put("dg_done_" + dgCur, dayKey()); } catch (e) {} } try { if (!naOn) dqAfterEnd(); } catch (ea) { if (String(ea) === "cancelled") throw ea; } return true; } }
+    else if (!noTimerWarned && Date.now() - t0 > 15000) { noTimerWarned = true; log("dungeon timer (cyan, top right) NOT detected yet - quest taps wait for it"); }
+    if (!has && !seen && Date.now() - t0 > 60000) { log("DAILY DG: dungeon timer never appeared (the entry tap was not detected) - skipping to the next dungeon"); return "skip"; }
   }
   log("DAILY DG: still running after " + Math.round(cap / 60000) + " min - queue stopped");
   return false;
@@ -3936,7 +4031,7 @@ function dgEnterFromBag(it) {         // wrapper: never leave the Inventory wind
 }
 function dgRunQueue() {
   if (dgBusy) return;                            // already running: never start a second queue thread
-  dgBusy = true; dgCancel = false; dgSrc = "DAILY";   // set BEFORE the thread starts (closes the double-tap race)
+  dgBusy = true; dgCancel = false; dgSrc = "DAILY"; try { npcWatchStart(); } catch (enw) {}   // set BEFORE the thread starts (closes the double-tap race)
   dgAutoRun = dgAutoGet(); dgTried = {};
   try { DBG.dgQueue("DAILY", "QUEUE_START", "runs per dungeon: " + dgRunsGet()); } catch (e) {}
   try { closeDaily(); } catch (ec) {}            // the popup must not cover the game while we tap (never let it leave dgBusy stuck)
@@ -4413,7 +4508,7 @@ function npBtnSync() {
 setInterval(npBtnSync, 1000);
 function npRunQueue() {
   if (dgBusy) return;                                  // already running (daily or non prem): never a second queue
-  dgBusy = true; dgCancel = false; naOn = true; naMode = "list"; dgSrc = "NONPREM"; dgTried = {}; naCap = 0;   // set BEFORE the thread starts (naCap reset: never inherit an AUTO DG stall limit)
+  dgBusy = true; dgCancel = false; naOn = true; naMode = "list"; dgSrc = "NONPREM"; try { npcWatchStart(); } catch (enw) {} dgTried = {}; naCap = 0;   // set BEFORE the thread starts (naCap reset: never inherit an AUTO DG stall limit)
   try { DBG.dgQueue("NONPREM", "QUEUE_START", "runs per dungeon: " + npRunsGet()); } catch (e) {}
   try { closeNp(); } catch (ec) {}                     // the popup must not cover the game while we tap
   threads.start(function () {

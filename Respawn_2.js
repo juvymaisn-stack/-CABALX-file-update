@@ -5,7 +5,7 @@
 //   X / Y inputs + TEST. Tap an input to type, press the keyboard Done to release focus.
 
 // ===== VERSION =====
-var APP_VERSION = 7;          // bump this on every release you publish (whole number)
+var APP_VERSION = 10;          // bump this on every release you publish (whole number)
 
 // ===== GAME SPACE =====
 var GW = 2093, GH = 1177;
@@ -99,6 +99,25 @@ function saveSubPass(v) {
 }
 function releaseFocus() { try { fw.disableFocus(); } catch (e) {} }
 
+function fwFit(w) {                      // cap the panel body to the screen height (it scrolls inside), keep window on screen
+  var sc = dgScreen();
+  if (w.body.getVisibility() == 0) {
+    ui.run(function () {
+      try {
+        w.bodyIn.measure(android.view.View.MeasureSpec.makeMeasureSpec(Math.round(190 * sc.d), android.view.View.MeasureSpec.EXACTLY),
+                         android.view.View.MeasureSpec.makeMeasureSpec(0, android.view.View.MeasureSpec.UNSPECIFIED));
+        var full = w.bodyIn.getMeasuredHeight();
+        var hdrH = w.hdr.getHeight() > 0 ? w.hdr.getHeight() : Math.round(40 * sc.d);
+        var maxH = sc.h - hdrH - Math.round(24 * sc.d);
+        var lp = w.body.getLayoutParams();
+        lp.height = full > maxH ? maxH : -2;      // -2 = wrap_content when it fits (portrait)
+        w.body.setLayoutParams(lp);
+      } catch (e) { log("panel fit err: " + e); }
+    });
+    sleep(300);
+  }
+  dgPlace(w, w.getX(), w.getY());
+}
 function buildPanel() {
   try {
     if (!floaty.checkPermission()) {
@@ -115,7 +134,8 @@ function buildPanel() {
         <text id="st" text="Idle" textSize="12sp" textColor="#94a3b8" w="0" layout_weight="1" gravity="center" maxLines="1"/>
         <text id="btnMin" text="&#9650;" textSize="13sp" textColor="#e2e8f0" bg="#2d2d3a" w="32" h="32" gravity="center"/>
       </horizontal>
-      <vertical id="body" padding="6 1">
+      <scroll id="body">
+      <vertical id="bodyIn" padding="6 1">
         <text text="SAVED SPOT" textSize="10sp" textColor="#64a8ff" textStyle="bold"/>
         <horizontal>
           <vertical w="0" layout_weight="1">
@@ -162,6 +182,9 @@ function buildPanel() {
           <button id="btnSavePos" text="AUTO SAVE SPOT" textSize="10sp" w="0" layout_weight="1" h="32" padding="0" bg="#2d2d3a" textColor="#fbbf24"/>
         </horizontal>
         <horizontal marginTop="2">
+          <button id="btnDg" text="NON-PREMIUM DG" textSize="10sp" w="0" layout_weight="1" h="32" padding="0" bg="#2d2d3a" textColor="#4ade80"/>
+        </horizontal>
+        <horizontal marginTop="2">
           <button id="btnLogout" text="LOGOUT" textSize="9sp" w="0" layout_weight="1" h="32" padding="0" bg="#2d2d3a" textColor="#e2e8f0"/>
           <button id="btnUpd" text="UPDATE" textSize="9sp" w="0" layout_weight="1" h="32" padding="0" bg="#2d2d3a" textColor="#e2e8f0"/>
           <button id="btnOwner" text="OWNER" textSize="9sp" w="0" layout_weight="1" h="32" padding="0" bg="#8a5a1a" textColor="#ffffff" visibility="gone"/>
@@ -169,6 +192,7 @@ function buildPanel() {
         <text text="LOG" textSize="10sp" textColor="#64a8ff" textStyle="bold" marginTop="3"/>
         <text id="lg" text="" textSize="9sp" textColor="#9ca3af" bg="#0b0b14" padding="4" minHeight="50" maxLines="4" ellipsize="end"/>
       </vertical>
+      </scroll>
     </vertical>
   );
   fw.setPosition(10, 200);
@@ -179,7 +203,7 @@ function buildPanel() {
   fw.hdr.setOnTouchListener(function (v, e) {
     var act = e.getAction();
     if (act == 0) { ox = e.getRawX(); oy = e.getRawY(); wx = fw.getX(); wy = fw.getY(); }
-    else if (act == 2) { fw.setPosition(wx + (e.getRawX() - ox), wy + (e.getRawY() - oy)); }
+    else if (act == 2) { dgPlace(fw, wx + (e.getRawX() - ox), wy + (e.getRawY() - oy)); }
     return true;
   });
 
@@ -197,10 +221,23 @@ function buildPanel() {
   fw.btnSave.click(function () { releaseFocus(); readCfgFromUi(); toast("Saved"); });
   fw.btnQuit.click(function () { running = false; exit(); });
   fw.btnSavePos.click(function () { releaseFocus(); autoSaveSpot(); });
+  fw.btnDg.click(function () { releaseFocus(); openDG(); });
   fw.btnLogout.click(function () { releaseFocus(); doLogout(); });
   fw.btnUpd.click(function () { releaseFocus(); toast("Checking for update (you have v" + APP_VERSION + ")..."); threads.start(function () { checkUpdate(true); }); });
   fw.btnOwner.click(function () { releaseFocus(); openOwner(); });
   if (acctAdmin) fw.btnOwner.setVisibility(0);
+  // fit to screen height now, and again on rotate / expand, so the panel scrolls in landscape
+  var me = fw;
+  threads.start(function () {
+    var last = "";
+    while (fw === me) {
+      try {
+        var sc = dgScreen(), key = sc.w + "x" + sc.h + "/" + me.body.getVisibility();
+        if (key !== last) { last = key; fwFit(me); }
+      } catch (e) { log("panel watch err: " + e); }
+      sleep(700);
+    }
+  });
   fw.btnMin.click(function () {
     releaseFocus();
     var b = fw.body;
@@ -388,7 +425,10 @@ function tapGameStart() {
 // ===== LOG / STATUS =====
 function log(msg) {
   console.log(msg);
-  ui.run(function () { if (fw) fw.lg.setText(String(msg)); });
+  ui.run(function () {
+    if (fw) fw.lg.setText(String(msg));
+    try { if (dw) dw.dgLog.setText(String(msg)); } catch (e) {}
+  });
 }
 function setStatus(t, color) {
   ui.run(function () {
@@ -417,6 +457,7 @@ function refreshButtons() {
   ui.run(function () {
     if (!fw) return;
     fw.btnRun.setText(running ? "\u25A0" : "\u25B6");
+    try { if (dw) { dw.btnDgGo.setText(running ? "STOP" : "START DG"); dw.btnDgGo.setBackgroundColor(colors.parseColor(running ? "#7a2a2a" : "#2e7d32")); } } catch (e) {}
     fw.btnRun.setTextColor(colors.parseColor(running ? "#f87171" : "#4ade80"));
     fw.btnTest.setEnabled(!running);
   });
@@ -549,6 +590,456 @@ function respawn() {
   returnToSpot();
 }
 
+// =====================================================================================================
+// ===== NON-PREMIUM DUNGEON MODE =====
+// Floating DG window: one ON/OFF switch per dungeon + START DG. Each dungeon is a list of STEPS that look for a
+// template image (PNG in DG_DIR) on screen and tap it. Death during a run -> respawn, abort that run, go on.
+// To add a dungeon: add [id, "Name"] to DG_NAMES (standard steps) or copy the Roa entry for a custom step list.
+// Step types:
+//   {t:"tap",  img:"x.png", label, timeout, after, optional}   wait for the image, then tap its center
+//   {t:"until",img:"x.png", label, timeout}                    wait for the image (e.g. "dungeon cleared"), no tap
+//   {t:"pt",   p:[gameX,gameY], label, after}                  tap a fixed game-space point
+//   {t:"auto"}                                                 turn AUTO attack on (only if off)
+//   {t:"wait", ms}                                             plain wait
+// =====================================================================================================
+var DG_DIR = "/storage/emulated/0/脚本/btn/";
+// Opening the Select Dungeon window (every dungeon starts with these two steps):
+//   1) OPTIONAL: tap the key's "Move" button (template dg_move.png, saved once in DG_DIR) -> the character walks to the
+//      dungeon entrance; waits DG_MOVE_WAIT ms for the trip. Skipped when the button is not on screen.
+//   2) tap the center of the screen -> opens the Select Dungeon window (character stands at the entrance).
+var DG_MOVE_WAIT = 15000;                 // ms to wait after "Move" for the character to arrive
+var DG_CENTER = [Math.round(GW / 2), Math.round(GH / 2)];
+// Bag steps (run before Move): open the bag -> tab IV (dungeon tickets) -> find THIS dungeon's entry item and tap it.
+// Templates saved once in DG_DIR:  dg_bag.png (bag button), dg_tab.png (ticket tab, optional), dg_bag_close.png (optional), <id>_item.png (entry item icon).
+// If an icon is missing from the first page of the tab, the bag list is swiped DG_BAG_SWIPE and searched again.
+var P_DG_BAG = [2039, 50];                        // bag icon in the top-right HUD (game space) - used when dg_bag.png is not saved
+var P_DG_TAB = [1486, 457];                       // inventory tab IV (left edge of the bag window) where the dungeon tickets are - used when dg_tab.png is not saved
+var DG_BAG_SWIPE = [[1300, 850], [1300, 450]];   // game-space [from, to] swipe inside the bag grid - tune if your bag layout differs
+var DG_BAG_PAGES = 5;                            // max swipes while searching for the item
+function dgOpen(name, id) {
+  return [
+    { t: "tap", img: "dg_bag.png",  fallback: P_DG_BAG, label: "Open bag", timeout: 2000, after: 1500 },
+    { t: "tap", img: "dg_tab.png", fallback: P_DG_TAB, label: "Bag tab IV (dungeon tickets)", timeout: 1500, after: 900 },
+    { t: "tap", img: id + "_item.png", label: "Find " + name + " in bag", timeout: 6000, after: 1200, scroll: true },
+    { t: "tap", img: "dg_move.png", label: "Move to " + name + " entrance", timeout: 3000, after: DG_MOVE_WAIT, optional: true },
+    { t: "tap", img: "dg_bag_close.png", label: "Close bag", timeout: 1500, after: 800, optional: true },
+    { t: "pt",  p: DG_CENTER,        label: "Open Select Dungeon", after: 1500 },
+    { t: "snap", id: id, name: name }
+  ];
+}
+// Standard step list. Template names are <id>_enter / _confirm / _clear / _exit .png in DG_DIR.
+function dgStd(id, name) {
+  return dgOpen(name, id).concat([
+    { t: "tap",   img: id + "_enter.png",   alt: "dg_item_enter.png", label: "Enter " + name,   timeout: 30000 },
+    { t: "tap",   img: id + "_confirm.png", label: "Confirm",         timeout: 12000, optional: true },
+    { t: "wait",  ms: 8000 },
+    { t: "auto" },
+    { t: "until", img: id + "_clear.png",   label: name + " cleared", timeout: 900000 },
+    { t: "tap",   img: id + "_exit.png",    label: "Leave " + name,   timeout: 20000, optional: true }
+  ]);
+}
+// Dungeons (names/entry items from the bag tab VII tooltips). Roa stays ON by default; the rest start OFF.
+var DG_NAMES = [
+  ["ic_underworld",    "Illusion Castle Underworld"],        // Copy of the Illusive Apocalypse
+  ["ic_underworld_ap", "IC Underworld Apocrypha"],           // Illusive Apocalypse (Apocrypha)
+  ["ic_radiant",       "Illusion Castle Radiant Hall"],      // Apocalypse of Other Dimension
+  ["ic_radiant_ap",    "IC Radiant Hall Apocrypha"],         // Apocalypse of Other Dimension (Apocrypha)
+  ["volcanic",         "Volcanic Citadel"],                  // Seal of the Darkness
+  ["abandoned",        "Abandoned City"],                    // Strange Liquid
+  ["catacomb",         "Catacomb Frost (Awakened)"],         // Frozen Clue (Awakened)
+  ["purifier",         "Purifier of the Forest"],            // Mountain Radar
+  ["celestia",         "Celestia"],                          // Dimensional Ship's Key
+  ["siena_b1",         "Altar of Siena B1F"],                // Siena's Crest B1F
+  ["siena_b2",         "Altar of Siena B2F"],                // Siena's Crest B2F
+  ["garden",           "Garden of Dust"],                    // Contaminated cactus
+  ["maquinas",         "Maquinas Outpost"],                  // Hacked Code Disk
+  ["ruina_weak",       "Weakened Ruina Station"],            // Copy of Muster Card
+  ["ruina",            "Ruina Station"],                     // Muster Card : Ruina Station
+  ["tou_b1",           "Frozen Tower of Undead B1F"],        // Copy of Epaulet of Undead
+  ["tou_b2",           "Tower of the Dead B2F"],             // Epaulet of Undead (B2F) Part1
+  ["phantom",          "Edge of Phantom"],                   // Broken Epaulet of Undead
+  ["forgotten_b1",     "Forgotten Temple B1F"],              // Muster Card : Forgotten Temple B1F
+  ["forbidden",        "Forbidden Island"],                  // Lost Island Compass
+  ["tou_b3",           "Tower of the Dead B3F"],             // Epaulet of Undead B3F
+  ["tou_b3_p2",        "Tower of the Dead B3F (Part2)"],     // Epaulet of Undead B3F (Part2)
+  ["panic",            "Panic Cave"],                        // Explorer's Journal
+  ["panic_aw",         "Panic Cave (Awakened)"],             // Explorer's Journal (Awakened)
+  ["frozen_canyon",    "Frozen Canyon"],                     // Lamp that illuminates the Soul
+  ["catacomb_n",       "Catacomb Frost"],                    // Frozen Clue
+  ["steamer",          "Steamer Crazy"],                     // Defected Train Card
+  ["steamer_aw",       "Steamer Crazy (Awakened)"],          // Defected Train Card (Awakened)
+  ["hazard",           "Hazardous Valley"],                  // Nearly-hatching Egg
+  ["hazard_aw",        "Hazardous Valley (Awakened)"],       // Nearly Hatched Egg (Awakened)
+  ["lava",             "Lava Hellfire"],                     // Ever-heated Lava Stone
+  ["lava_aw",          "Lava Hellfire (Awakened)"],          // Ever-Heated Lava Stone (Awakened)
+  ["flame_nest",       "Flame Nest"],                        // Broken Devil's Horn
+  ["turminos",         "Turminos Maquina"],                  // Broken Circuit Chip
+  ["ancient_tomb",     "Ancient Tomb"],                      // Hidden Tomb Key
+  ["chaos1",           "Chaos Arena Lv.1"],                  // Key of Chaos Lv. 1
+  ["chaos2",           "Chaos Arena Lv.2"],                  // Key of Chaos Lv. 2
+  ["chaos3",           "Chaos Arena Lv.3"],                  // Key of Chaos Lv. 3
+  ["chaos4",           "Chaos Arena Lv.4"],                  // Key of Chaos Lv. 4
+  ["chaos5",           "Chaos Arena Lv.5"],                  // Key of Chaos Lv. 5
+  ["chaos6",           "Chaos Arena Lv.6"],                  // Key of Chaos Lv. 6
+  ["chaos7",           "Chaos Arena Lv.7"]                   // Key of Chaos Lv. 7
+];
+var DG_LIST = [
+  { id: "roa", name: "Roa", steps: dgOpen("Roa", "roa").concat([
+    // EDIT these file names to the templates you saved in the btn folder (screens are not known to the script yet)
+    { t: "tap",   img: "roa_enter.png",   label: "Enter Roa",   timeout: 30000 },
+    { t: "tap",   img: "roa_confirm.png", label: "Confirm",     timeout: 12000, optional: true },
+    { t: "wait",  ms: 8000 },
+    { t: "auto" },
+    { t: "until", img: "roa_clear.png",   label: "Roa cleared", timeout: 900000 },
+    { t: "tap",   img: "roa_exit.png",    label: "Leave Roa",   timeout: 20000, optional: true }
+  ]) }
+];
+DG_NAMES.forEach(function (n) { DG_LIST.push({ id: n[0], name: n[1], off: true, steps: dgStd(n[0], n[1]) }); });
+var dw = null, dgImgs = {};
+
+function dgGetOn() {
+  var m = {};
+  try { m = JSON.parse(store.get("dg_on", "{}")) || {}; } catch (e) { m = {}; }
+  for (var i = 0; i < DG_LIST.length; i++) if (m[DG_LIST[i].id] === undefined) m[DG_LIST[i].id] = !DG_LIST[i].off;
+  return m;
+}
+function dgImg(name) {                    // cached template; a missing file is retried next time (so you can add it while running)
+  if (!dgImgs[name]) {
+    var p = DG_DIR + name;
+    try { if (files.exists(p)) dgImgs[name] = images.read(p); } catch (e) { log("DG tpl err: " + e); }
+  }
+  return dgImgs[name] || null;
+}
+function dgFind(img, name) {              // [x, y] screen-px center of the match, or null
+  var t = dgImg(name);
+  if (!t) return null;
+  var pt = null;
+  try { pt = images.findImage(img, t, { threshold: TPL_THRESHOLD }); } catch (e) { log("DG find err: " + e); }
+  return pt ? [Math.round(pt.x + t.getWidth() / 2), Math.round(pt.y + t.getHeight() / 2)] : null;
+}
+function deadOn(img) {                    // same death-dialog test as dialogVisible(), on an image we already grabbed
+  var a1 = pix(img, P_A1), a2 = pix(img, P_A2), b = pix(img, P_B);
+  return (isA(a1) || isA(a2)) && isB(b);
+}
+function respawnDG() {                    // respawn in town only - no return-to-spot (that spot is outside the dungeon)
+  setStatus("DG: dead - respawning", "#f87171");
+  log("DG: DEAD -> respawn");
+  nap(600);
+  tapGame(P_WARP, "warp");
+  nap(700);
+  tapGame(P_OK, "ok");
+  nap(2500);
+  if (dialogVisible()) { method = (method + 1) % METHODS.length; log("still dead, switching tap method -> " + method); return; }
+  nap(CFG.AFTER_RESPAWN_WAIT);
+}
+// Select Dungeon popup = which dungeon is this?  The bottom-left title ("Forbidden Island", "Volcanic Citadel"...) is saved ONCE per
+// dungeon as <id>_title.png (first time that dungeon is opened by the script), plus the full popup as popup_<id>.png.
+// Next runs compare the popup title with it, so the script never enters the wrong dungeon (e.g. B1F vs B2F, normal vs Awakened).
+// Wrong one saved? delete <id>_title.png in DG_DIR and it is saved again on the next run. Every result is appended to dg_record.txt.
+var DG_TITLE_BOX = [69, 806, 450, 46];    // game-space [x, y, w, h] of the dungeon name line in the popup's bottom-left panel
+function dgRecord(id, name, what) {
+  try { files.ensureDir(DG_DIR); files.append(DG_DIR + "dg_record.txt", new Date().toLocaleString() + "  " + id + "  " + name + "  " + what + "\n"); } catch (e) {}
+}
+function dgSnap(st) {
+  var tplName = st.id + "_title.png", end = Date.now() + 4000;
+  while (true) {
+    if (!running) throw "STOP";
+    var img = grab();
+    if (!img) { nap(500); continue; }
+    if (deadOn(img)) { img.recycle(); respawnDG(); return "dead"; }
+    if (!dgImg(tplName)) {                                   // first time: save whose dungeon this popup is
+      var p1 = toScreen([DG_TITLE_BOX[0], DG_TITLE_BOX[1]]), p2 = toScreen([DG_TITLE_BOX[0] + DG_TITLE_BOX[2], DG_TITLE_BOX[1] + DG_TITLE_BOX[3]]);
+      var rx = Math.max(0, Math.min(p1[0], p2[0])), ry = Math.max(0, Math.min(p1[1], p2[1]));
+      var rw = Math.min(img.getWidth() - rx, Math.abs(p2[0] - p1[0])), rh = Math.min(img.getHeight() - ry, Math.abs(p2[1] - p1[1]));
+      try {
+        files.ensureDir(DG_DIR);
+        var crop = images.clip(img, rx, ry, rw, rh);
+        images.save(crop, DG_DIR + tplName);
+        crop.recycle();
+        images.save(img, DG_DIR + "popup_" + st.id + ".png");
+        log("DG: popup saved as " + st.name + " (" + tplName + ")");
+        dgRecord(st.id, st.name, "SAVED popup");
+      } catch (e) { log("DG: popup save err: " + e); }
+      img.recycle();
+      return "ok";
+    }
+    var pos = dgFind(img, tplName);
+    img.recycle();
+    if (pos) { log("DG: popup is " + st.name + " - OK"); dgRecord(st.id, st.name, "popup OK"); return "ok"; }
+    if (Date.now() > end) break;
+    nap(500);
+  }
+  log("DG: popup is NOT " + st.name + " - skipped (delete " + tplName + " in " + DG_DIR + " if that one is wrong)");
+  dgRecord(st.id, st.name, "popup MISMATCH");
+  return "fail";
+}
+// Auto-OK for the pop-ups that follow a dungeon clear. Templates (DG_DIR): dg_clear_exit.png (Dungeon Clear -> Exit),
+// dg_challenge.png (Enter Dungeon -> Challenge = starts the run), dg_gained.png (Guild Treasure -> Gained), dg_roll.png (Bonus SP -> Roll), dg_bonus_exit.png (Earned SP -> Exit). A missing file is just skipped.
+var DG_POPUPS = [
+  { img: "dg_challenge.png",   label: "Challenge (Enter Dungeon)", auto: true },
+  { img: "dg_gained.png",     label: "Gained (guild treasure)" },
+  { img: "dg_roll.png",       label: "Roll (bonus SP)" },
+  { img: "dg_bonus_exit.png", label: "Exit (bonus SP)" },
+  { img: "dg_clear_exit.png", label: "Exit (dungeon clear)" }
+];
+// General pop-ups (also checked while idle in the main loop): Periodical Item Expired -> OK, Character Penalty -> OK,
+// Daily Login Reward -> tap today's reward, then close. Templates in DG_DIR: dg_expired_ok.png, dg_penalty_ok.png, dg_login_title.png.
+var GEN_POPUPS = [
+  { img: "dg_expired_ok.png", label: "OK (periodical item expired)" },
+  { img: "dg_penalty_ok.png", label: "OK (character penalty)" }
+];
+var lastLogin = 0, lastGen = 0;
+// Daily Login grid is laid out relative to the "Daily Login Reward" title: 7 columns x 4 rows (day 1..28, row by row)
+var LOGIN_DX = [-526, -373, -220, -67, 87, 240, 442], LOGIN_DY = [160, 320, 478, 638], LOGIN_CLOSE = [540, 2];
+function loginCellFree(img, cx, cy) {     // true = the cell still shows a coloured reward icon (a claimed day is dark grey "Complete")
+  var n = 0, w = img.getWidth(), h = img.getHeight();
+  for (var y = cy - 50; y <= cy + 50; y += 6) {
+    for (var x = cx - 50; x <= cx + 50; x += 6) {
+      if (x < 0 || y < 0 || x >= w || y >= h) continue;
+      var c = images.pixel(img, x, y), r = colors.red(c), g = colors.green(c), b = colors.blue(c);
+      var mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+      if (mx > 90 && mx - mn > 70) n++;
+    }
+  }
+  return n >= 12;
+}
+function claimLogin(img, t) {             // t = screen-px centre of the title template
+  var pick = null;
+  for (var r = 0; r < 4 && !pick; r++) {
+    for (var c = 0; c < 7 && !pick; c++) {
+      var cx = t[0] + LOGIN_DX[c], cy = t[1] + LOGIN_DY[r];
+      if (loginCellFree(img, cx, cy)) pick = [cx, cy, r * 7 + c + 1];
+    }
+  }
+  if (pick) { log("Daily Login: today's reward = day " + pick[2]); tapPx([pick[0], pick[1]], "Daily Login reward day " + pick[2]); nap(1800); }
+  else log("Daily Login: all days already claimed");
+  tapPx([t[0] + LOGIN_CLOSE[0], t[1] + LOGIN_CLOSE[1]], "Close Daily Login");
+  nap(1000);
+}
+function genPopups(img) {                 // -> label of the pop-up handled, or null
+  for (var i = 0; i < GEN_POPUPS.length; i++) {
+    var pu = GEN_POPUPS[i];
+    if (!dgImg(pu.img)) continue;
+    var pos = dgFind(img, pu.img);
+    if (pos) { tapPx(pos, pu.label); log("auto " + pu.label); return pu.label; }
+  }
+  if (dgImg("dg_login_title.png") && Date.now() - lastLogin > 120000) {
+    var t = dgFind(img, "dg_login_title.png");
+    if (t) { lastLogin = Date.now(); claimLogin(img, t); return "Daily Login Reward"; }
+  }
+  return null;
+}
+function dgPopups(img) {                  // taps the first pop-up button found on an already grabbed image -> label or null
+  for (var i = 0; i < DG_POPUPS.length; i++) {
+    var pu = DG_POPUPS[i];
+    if (!dgImg(pu.img)) continue;
+    var pos = dgFind(img, pu.img);
+    if (pos) {
+      tapPx(pos, pu.label); log("DG: auto " + pu.label);
+      if (pu.auto) { nap(1500); try { ensureAuto(); } catch (e) {} }     // run started -> make sure AUTO is on
+      return pu.label;
+    }
+  }
+  return genPopups(img);
+}
+function dgDrain(maxMs) {                 // after a run: keep clicking pop-ups until none shows up for a few seconds
+  var t0 = Date.now(), last = 0;
+  while (running && Date.now() - t0 < (maxMs || 40000)) {
+    var img = grab();
+    if (!img) { nap(500); continue; }
+    var hit = deadOn(img) ? null : dgPopups(img);
+    img.recycle();
+    if (hit) { last = Date.now(); nap(1200); continue; }
+    if (last ? Date.now() - last > 6000 : Date.now() - t0 > 8000) break;
+    nap(700);
+  }
+}
+var dgWhy = "";
+function dgStep(st, dname) {              // -> "ok" | "skip" | "fail" | "dead"
+  if (st.t === "snap") return dgSnap(st);
+  if (st.alt && !dgImg(st.img) && dgImg(st.alt)) { var c2 = {}; for (var k in st) c2[k] = st[k]; c2.img = st.alt; st = c2; }   // shared fallback template
+  if (st.t === "wait") {                  // plain wait, but pop-ups (Enter Dungeon -> Challenge ...) are clicked while waiting
+    var wEnd = Date.now() + (st.ms || 1000);
+    while (Date.now() < wEnd) {
+      if (!running) throw "STOP";
+      var wi = grab();
+      if (wi) { var wh = deadOn(wi) ? null : dgPopups(wi); wi.recycle(); if (wh) { nap(1200); continue; } }
+      nap(700);
+    }
+    return "ok";
+  }
+  if (st.t === "auto") { ensureAuto(); return "ok"; }
+  if (st.t === "pt")   { tapGame(st.p, st.label || "point"); nap(st.after || 800); return "ok"; }
+  var label = st.label || st.img;
+  if (!dgImg(st.img)) {
+    log("DG: template missing: " + DG_DIR + st.img);
+    if (st.fallback) { tapGame(st.fallback, label + " (fixed point)"); nap(st.after || 1200); return "ok"; }
+    if (!st.optional) dgWhy = "missing " + st.img;
+    return st.optional ? "skip" : "fail";
+  }
+  setStatus("DG " + dname + ": " + label, "#38bdf8");
+  var swipes = 0, lastSwipe = 0;
+  var end = Date.now() + (st.timeout || 20000) + (st.scroll ? DG_BAG_PAGES * 2500 : 0);
+  while (Date.now() < end) {
+    if (!running) throw "STOP";
+    var img = grab();
+    if (!img) { nap(500); continue; }
+    var dead = deadOn(img);
+    var pos = dead ? null : dgFind(img, st.img);
+    var hit = (dead || pos) ? null : dgPopups(img);      // the step's own target always wins in the same frame
+    img.recycle();
+    if (dead) { respawnDG(); return "dead"; }
+    if (pos) {
+      if (st.t === "tap") { tapPx(pos, label); nap(st.after || 1200); }
+      else log("DG: " + label);
+      return "ok";
+    }
+    if (hit) { nap(900); continue; }
+    if (st.scroll && swipes < DG_BAG_PAGES && Date.now() - lastSwipe > 1500) {   // not on this page of the bag -> next page
+      var f = toScreen(DG_BAG_SWIPE[0]), t2 = toScreen(DG_BAG_SWIPE[1]);
+      log("DG: " + label + " - scrolling bag (" + (swipes + 1) + "/" + DG_BAG_PAGES + ")");
+      try { swipe(f[0], f[1], t2[0], t2[1], 500); } catch (e) { log("DG swipe err: " + e); }
+      swipes++; lastSwipe = Date.now(); nap(900);
+      continue;
+    }
+    nap(st.t === "until" ? CFG.CHECK_EVERY : 600);
+  }
+  if (st.fallback) { tapGame(st.fallback, label + " (fixed point)"); nap(st.after || 1200); return "ok"; }
+  if (!st.optional) dgWhy = "not found: " + st.img;
+  log("DG: timed out: " + label + (st.scroll ? " (no ticket in bag tab IV, or " + st.img + " not saved)" : ""));
+  return st.optional ? "skip" : "fail";
+}
+function runDungeon(d) {                  // -> "done" | "dead" | "fail"
+  log("DG: start " + d.name);
+  for (var i = 0; i < d.steps.length; i++) {
+    var r = dgStep(d.steps[i], d.name);
+    if (r === "dead") return "dead";
+    if (r === "fail") return "fail";
+  }
+  return "done";
+}
+function dgMain() {
+  if (CFG.SHOW_CONSOLE) console.show();
+  log("== Non-premium DG ==");
+  setStatus("DG starting...", "#fbbf24");
+  try { auto.waitFor(); } catch (e) { log("auto.waitFor: " + e); }
+  try { hasRoot = (shell("id", true).code === 0); } catch (e) { hasRoot = false; }
+  setupCapture();
+  buildMethods();
+  if (capMode === "none") { log("no capture available - allow screen capture for AutoX.js"); return; }
+  var pkg = findCabalPkg(), already = false;
+  try { already = !!pkg && currentPackage() === pkg; } catch (e) {}
+  if (!already) { pkg = openCabal(); waitForApp(pkg, 40000); tapToStart(); tapGameStart(); }
+  while (running) {
+    var on = dgGetOn(), ran = 0, done = 0;
+    for (var i = 0; i < DG_LIST.length && running; i++) {
+      var d = DG_LIST[i];
+      if (!on[d.id]) continue;
+      ran++;
+      var r = runDungeon(d);
+      if (r === "done" || r === "fail") dgDrain(40000);
+      log("DG " + d.name + ": " + r + (r === "fail" && dgWhy ? " - " + dgWhy : ""));
+      if (r === "fail" && dgWhy) setStatus("DG fail: " + dgWhy, "#f87171");
+      dgWhy = "";
+      if (r === "done") done++;
+      nap(2000);
+    }
+    if (!ran) { log("DG: switch at least one dungeon ON"); toast("Switch a dungeon ON first"); break; }
+    if (!done) { log("DG: nothing could run (entry used up / template missing) - stopped"); break; }
+    if (!store.get("dg_repeat", true)) break;
+  }
+  setStatus("DG finished", "#94a3b8");
+}
+function startDG() {
+  if (running) { toast("Already running"); return; }
+  readCfgFromUi();
+  running = true;
+  refreshButtons();
+  worker = threads.start(function () {
+    try { dgMain(); }
+    catch (e) { if (String(e) !== "STOP") log("DG fatal: " + e); }
+    running = false;
+    log("stopped");
+    refreshButtons();
+  });
+}
+// --- DG window must stay on screen in portrait AND landscape (screen height differs, window was cut off) ---
+function dgScreen() {                     // real screen size in px for the CURRENT orientation
+  var dm = new android.util.DisplayMetrics();
+  context.getSystemService(android.content.Context.WINDOW_SERVICE).getDefaultDisplay().getRealMetrics(dm);
+  return { w: dm.widthPixels, h: dm.heightPixels, d: dm.density };
+}
+function dgPlace(w, x, y) {               // setPosition, kept fully inside the screen
+  var s = dgScreen(), ww = w.getWidth() > 0 ? w.getWidth() : Math.round(190 * s.d), wh = w.getHeight() > 0 ? w.getHeight() : Math.round(300 * s.d);
+  x = Math.max(0, Math.min(x, s.w - ww));
+  y = Math.max(0, Math.min(y, s.h - wh));
+  w.setPosition(Math.round(x), Math.round(y));
+}
+function dgFit(w) {                       // shrink the dungeon list to the screen height, then re-place the window
+  var s = dgScreen();
+  var sh = Math.max(70, Math.min(260, Math.round(s.h / s.d - 190)));   // 190dp = header + switch + buttons + log + margins
+  ui.run(function () {
+    try { var lp = w.dgScroll.getLayoutParams(); lp.height = Math.round(sh * s.d); w.dgScroll.setLayoutParams(lp); } catch (e) { log("DG fit err: " + e); }
+  });
+  sleep(300);                             // let the layout settle so getHeight() is right (plain sleep: nap() throws when the bot is stopped)
+  dgPlace(w, w.getX(), w.getY());
+}
+function closeDG() { try { if (dw) dw.close(); } catch (e) {} dw = null; }
+function openDG() {
+  if (dw) { closeDG(); return; }
+  dw = floaty.window(
+    <vertical w="190" bg="#f01a1a24">
+      <text id="dgHdr" text="NON-PREMIUM DG (drag here)" textSize="11sp" textColor="#e0b84a" textStyle="bold" bg="#1a1a24" padding="5"/>
+      <scroll id="dgScroll" h="260"><vertical id="dgList" padding="6 2"/></scroll>
+      <Switch id="dgRep" text="Repeat rounds" textSize="11sp" textColor="#e2e8f0" padding="6 2"/>
+      <horizontal marginTop="2">
+        <button id="btnDgGo" text="START DG" textSize="10sp" w="0" layout_weight="1" h="34" padding="0" bg="#2e7d32" textColor="#ffffff"/>
+        <button id="btnDgClose" text="CLOSE" textSize="10sp" w="0" layout_weight="1" h="34" padding="0" bg="#2d2d3a" textColor="#e2e8f0"/>
+      </horizontal>
+      <text id="dgLog" text="" textSize="9sp" textColor="#9ca3af" bg="#0b0b14" padding="4" minHeight="40" maxLines="3" ellipsize="end"/>
+    </vertical>
+  );
+  var w = dw;
+  w.setPosition(30, 260);
+  var ox = 0, oy = 0, wx = 0, wy = 0;
+  w.dgHdr.setOnTouchListener(function (v, e) {
+    var act = e.getAction();
+    if (act == 0) { ox = e.getRawX(); oy = e.getRawY(); wx = w.getX(); wy = w.getY(); }
+    else if (act == 2) { dgPlace(w, wx + (e.getRawX() - ox), wy + (e.getRawY() - oy)); }
+    return true;
+  });
+  var on = dgGetOn();
+  ui.run(function () {
+    DG_LIST.forEach(function (d) {
+      var sw = new android.widget.Switch(context);
+      sw.setText(d.name); sw.setTextSize(11); sw.setTextColor(colors.parseColor("#e2e8f0"));
+      sw.setChecked(!!on[d.id]);
+      sw.setOnCheckedChangeListener(new android.widget.CompoundButton.OnCheckedChangeListener({
+        onCheckedChanged: function (b, v) { try { var m = dgGetOn(); m[d.id] = !!v; store.put("dg_on", JSON.stringify(m)); } catch (e) {} }
+      }));
+      w.dgList.addView(sw);
+    });
+    w.dgRep.setChecked(!!store.get("dg_repeat", true));
+    w.dgRep.setOnCheckedChangeListener(new android.widget.CompoundButton.OnCheckedChangeListener({
+      onCheckedChanged: function (b, v) { try { store.put("dg_repeat", !!v); } catch (e) {} }
+    }));
+    w.btnDgGo.setText(running ? "STOP" : "START DG");
+  });
+  w.btnDgGo.click(function () { if (running) stopBot(); else startDG(); });
+  w.btnDgClose.click(function () { closeDG(); });
+  // fit now, and again whenever the screen is rotated
+  threads.start(function () {
+    var last = "";
+    while (dw === w) {
+      try {
+        var sc = dgScreen(), key = sc.w + "x" + sc.h;
+        if (key !== last) { last = key; dgFit(w); }
+      } catch (e) { log("DG watch err: " + e); }
+      sleep(1000);
+    }
+  });
+}
+
 // ===== SETUP (runs in worker thread) =====
 function setupCapture() {
   if (capReady) return;
@@ -611,6 +1102,11 @@ function botMain(testOnly) {
       } else if (dialogVisible()) {
         respawn();
         if (running) setStatus("Watching for death", "#4ade80");
+      }
+      if (capMode !== "none" && Date.now() - lastGen > 2500) {
+        lastGen = Date.now();
+        var gi = grab();
+        if (gi) { try { genPopups(gi); } finally { gi.recycle(); } }
       }
     } catch (e) {
       if (String(e) === "STOP") break;
@@ -750,16 +1246,11 @@ function fbPullAccount() {              // {bound, exp, admin} or null when it c
     return { bound: (f.deviceId && f.deviceId.stringValue) || "", exp: ts || 0, admin: !!(f.admin && f.admin.booleanValue === true), cmd: (f.cmd && f.cmd.stringValue) || "" };
   } catch (e) { return null; }
 }
-function fbDeviceCheck() {              // "OK" (allowed / now bound), "OTHER" (locked to another device) or "NETWORK"
-  var me = myDeviceId(), a = fbPullAccount();
+function fbDeviceCheck() {              // "OK" or "NETWORK". The respawn script NEVER binds / locks a device (the main script does that).
+  var a = fbPullAccount();
   if (!a) return "NETWORK";
   acctExp = a.exp; acctAdmin = a.admin;
-  if (a.admin) return "OK";
-  if (a.bound) return a.bound === me ? "OK" : "OTHER";
-  try {
-    var r = fbCommit([fsDoc("users/" + fbAuth.uid, { deviceId: me }, [])]);
-    return (r && r.statusCode < 300) ? "OK" : "NETWORK";
-  } catch (e) { return "NETWORK"; }
+  return "OK";                          // no device write, no "locked to another device" rejection
 }
 
 // ----- access keys -----
@@ -923,7 +1414,6 @@ function startSession() {
         var a = fbPullAccount();
         if (a) {
           acctExp = a.exp; acctAdmin = a.admin;
-          if (!a.admin && a.bound && a.bound !== myDeviceId()) { kickOut("Account locked to another device"); return; }
           if (!a.admin && a.cmd === "kick") {
             try { fbCommit([fsDoc("users/" + fbAuth.uid, { cmd: "" })]); } catch (e1) {}
             kickOut("Logged out by the owner"); return;
@@ -943,7 +1433,7 @@ function doLogout() {
   currentUser = "";
   closeOwner(); closePanel(); showLogin();
 }
-function closePanel() { try { if (fw) fw.close(); } catch (e) {} fw = null; }
+function closePanel() { closeDG(); try { if (fw) fw.close(); } catch (e) {} fw = null; }
 
 // ----- clipboard (a floating window has no normal paste bubble: every owner field has a PASTE button) -----
 function getClipText() {
@@ -1227,7 +1717,7 @@ function openOwner() {
     w.ghpath.setText(o.path || "Respawn_2.js"); w.ghfile.setText(o.file || "/sdcard/Respawn_2.js");
     w.ghtok.setText(o.tok ? credDec(o.tok) : "");
   } catch (e) {}
-  w.swAuto.setChecked(!!store.get("auto_login", false));
+  w.swAuto.setChecked(!!store.get("auto_login", true));
   w.swAuto.setOnCheckedChangeListener(new android.widget.CompoundButton.OnCheckedChangeListener({
     onCheckedChanged: function (b, on) { try { store.put("auto_login", !!on); } catch (e) {} }
   }));
@@ -1327,6 +1817,7 @@ events.on("exit", function () {
   try { if (fw) fw.close(); } catch (e) {}
   try { if (lw) lw.close(); } catch (e) {}
   try { if (ow) ow.close(); } catch (e) {}
+  try { if (dw) dw.close(); } catch (e) {}
 });
 try {                                    // ask for "draw over other apps" once, before any window is built
   if (!floaty.checkPermission()) {
@@ -1335,10 +1826,10 @@ try {                                    // ask for "draw over other apps" once,
     while (!floaty.checkPermission()) sleep(500);
   }
 } catch (e) {}
-// AUTO SIGN-IN: a saved login signs in silently; the owner account only with "Auto sign in (owner)" (OWNER window).
+// AUTO SIGN-IN: a saved login signs in silently, owner account too (ON by default; the "Auto sign in (owner)" switch in the OWNER window turns it off).
 // Anything else (no saved login / it failed / expired key) shows the login window.
 var autoSaved = loadLogin();
-if (autoSaved && (autoSaved.a ? !!store.get("auto_login", false) : true)) {
+if (autoSaved && (autoSaved.a ? !!store.get("auto_login", true) : true)) {
   toast("Signing in...");
   threads.start(function () {
     var ok = false;

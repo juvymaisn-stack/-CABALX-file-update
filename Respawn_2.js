@@ -5,7 +5,7 @@
 //   X / Y inputs + TEST. Tap an input to type, press the keyboard Done to release focus.
 
 // ===== VERSION =====
-var APP_VERSION = 20;          // bump this on every release you publish (whole number)
+var APP_VERSION = 21;          // bump this on every release you publish (whole number)
 
 // ===== GAME SPACE =====
 var GW = 2093, GH = 1177;
@@ -647,6 +647,37 @@ function autoExpired() {                // true = the popup was there and OK was
   return true;
 }
 
+// ===== "Unlimited Warp" popup (600 gems / Cancel) -> tap Cancel, then tap the X beside GPS =====
+// Checked by colour: blue "600" button on the left + slate-grey Cancel button on the right, both at the bottom of the dialog.
+// Never matches the expired popup (one wide OK button lower down), the sub-password dialog or the death dialog (other positions).
+var R_UW_BLUE = [700, 745, 1030, 795];    // inside the blue 600-gem button
+var R_UW_CANCEL = [1085, 745, 1415, 795]; // inside the Cancel button
+var P_UW_CANCEL = [1250, 771];            // centre of Cancel
+var lastUwTap = 0;
+function isSlateBtn(c) {
+  var r = colors.red(c), g = colors.green(c), b = colors.blue(c);
+  return r >= 70 && r <= 150 && g >= 80 && g <= 160 && b >= 100 && b <= 190 && (b - r) >= 10 && (b - r) < 70 && Math.abs(g - r) < 30;
+}
+function warpPopupShowing() {
+  var img = grab();
+  if (!img) return false;
+  try { return fracIn(img, R_UW_BLUE, isBtnBlue, 4) >= 0.6 && fracIn(img, R_UW_CANCEL, isSlateBtn, 4) >= 0.45; } finally { img.recycle(); }
+}
+function autoWarpPopup() {               // true = the popup was there: Cancel tapped, then the GPS X tapped
+  if (Date.now() - lastUwTap < 1000) return false;
+  if (!warpPopupShowing()) return false;
+  nap(250);                              // must still be there a moment later (no taps on transitions)
+  if (!warpPopupShowing()) return false;
+  lastUwTap = Date.now();
+  setStatus("Unlimited Warp: Cancel", "#fbbf24");
+  log("Unlimited Warp popup -> Cancel, then close GPS (X)");
+  tapGame(P_UW_CANCEL, "warp popup Cancel");
+  nap(700);
+  tapGame(P_GPS_CLOSE, "close GPS (X)");
+  nap(800);
+  return true;
+}
+
 // ===== LOG / STATUS =====
 // Every log line is also saved to a text file (timestamped). When it passes ~500 KB it is moved to cabal_log_old.txt and a new one starts.
 var LOG_DIR = "/storage/emulated/0/脚本/logs/", LOG_FILE = LOG_DIR + "cabal_log.txt", LOG_MAX = 500 * 1024, logN = 0;
@@ -801,7 +832,9 @@ function returnToSpot() {
   nap(900);
 
   tapGame(P_GPS_WARP, "Unlimited Warp");
-  nap(4000);
+  nap(1500);
+  autoWarpPopup();                       // the 600-gem popup showed up -> Cancel + close GPS
+  nap(2500);
 
   if (gpsOpen()) {
     tapGame(P_GPS_CLOSE, "close GPS");
@@ -1410,6 +1443,7 @@ function respawnLoop() {
     try {
       if (running) {                                 // PLAY / DG / TEST is using the screen right now: only watch for the "Periodical Item Expired" popup
         if (autoExpired()) log("expired popup cleared during run");
+        else if (autoWarpPopup()) log("warp popup cleared during run");
         nap(1000); continue;
       }
       if (dialogVisible()) {
@@ -1419,6 +1453,8 @@ function respawnLoop() {
       } else if (autoPin()) {                        // sub-password dialog on screen -> type the saved PIN
         if (respawnOn && !running) setStatus("Watching for death", "#4ade80");
       } else if (autoExpired()) {                    // "Periodical Item Expired" popup -> tap OK
+        if (respawnOn && !running) setStatus("Watching for death", "#4ade80");
+      } else if (autoWarpPopup()) {                  // "Unlimited Warp" popup -> Cancel, then X beside GPS
         if (respawnOn && !running) setStatus("Watching for death", "#4ade80");
       }
     } catch (e) {

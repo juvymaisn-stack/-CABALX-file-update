@@ -5,7 +5,7 @@
 //   X / Y inputs + TEST. Tap an input to type, press the keyboard Done to release focus.
 
 // ===== VERSION =====
-var APP_VERSION = 23;          // bump this on every release you publish (whole number)
+var APP_VERSION = 24;          // bump this on every release you publish (whole number)
 
 // ===== GAME SPACE =====
 var GW = 2093, GH = 1177;
@@ -647,6 +647,29 @@ function autoExpired() {                // true = the popup was there and its X 
   setStatus("Item expired: close", "#fbbf24");
   log("Periodical Item Expired popup -> tap X");
   tapGame(P_EXP_X, "expired X");
+  nap(800);
+  return true;
+}
+
+// ===== "Blessing bead period expired" popup -> tap the X in its top-right corner =====
+// Same style of popup as above but smaller: detected by the blue "Confirmation" button (game space ~x 676-1438, y 757-835), by colour.
+var R_BEAD_OK = [1080, 775, 1400, 820]; // inside the Confirmation button (right part, clear of the Unlimited Warp popup's blue button)
+var P_BEAD_X = [1415, 364];             // the X in the popup's top-right corner
+var lastBeadTap = 0;
+function beadShowing() {
+  var img = grab();
+  if (!img) return false;
+  try { return fracIn(img, R_BEAD_OK, isExpBlue, 4) >= 0.7; } finally { img.recycle(); }
+}
+function autoBead() {                   // true = the popup was there and its X was tapped
+  if (Date.now() - lastBeadTap < 1000) return false;
+  if (!beadShowing()) return false;
+  nap(250);                             // must still be there a moment later (no taps on transitions)
+  if (!beadShowing() || pinShowing() || dialogVisible()) return false;
+  lastBeadTap = Date.now();
+  setStatus("Bead expired: close", "#fbbf24");
+  log("Blessing bead expired popup -> tap X");
+  tapGame(P_BEAD_X, "bead expired X");
   nap(800);
   return true;
 }
@@ -1445,8 +1468,9 @@ function respawnLoop() {
   setStatus("Watching for death", "#4ade80");
   while (respawnOn) {
     try {
-      if (running) {                                 // PLAY / DG / TEST is using the screen right now: only watch for the "Periodical Item Expired" and "Unlimited Warp" popups
+      if (running) {                                 // PLAY / DG / TEST is using the screen right now: only watch for the expired-item, bead and "Unlimited Warp" popups
         if (autoExpired()) log("expired popup closed during run");
+        else if (autoBead()) log("bead popup closed during run");
         else if (autoWarpPopup()) log("warp popup cleared during run");
         nap(1000); continue;
       }
@@ -1457,6 +1481,8 @@ function respawnLoop() {
       } else if (autoPin()) {                        // sub-password dialog on screen -> type the saved PIN
         if (respawnOn && !running) setStatus("Watching for death", "#4ade80");
       } else if (autoExpired()) {                    // "Periodical Item Expired" popup -> tap its X
+        if (respawnOn && !running) setStatus("Watching for death", "#4ade80");
+      } else if (autoBead()) {                       // "Blessing bead period expired" popup -> tap its X
         if (respawnOn && !running) setStatus("Watching for death", "#4ade80");
       } else if (autoWarpPopup()) {                  // "Unlimited Warp" popup -> Cancel, then X beside GPS
         if (respawnOn && !running) setStatus("Watching for death", "#4ade80");

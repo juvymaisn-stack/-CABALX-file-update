@@ -5,7 +5,7 @@
 //   X / Y inputs + TEST. Tap an input to type, press the keyboard Done to release focus.
 
 // ===== VERSION =====
-var APP_VERSION = 14;          // bump this on every release you publish (whole number)
+var APP_VERSION = 17;          // bump this on every release you publish (whole number)
 
 // ===== GAME SPACE =====
 var GW = 2093, GH = 1177;
@@ -74,6 +74,7 @@ function loadCfgToUi() {
     fw.inSub.setText(getSubPass());
     fw.cbAuto.setChecked(!!CFG.AUTO_CHECK);
     fw.cbConsole.setChecked(!!CFG.SHOW_CONSOLE);
+    try { swSync = true; fw.swResp.setChecked(!!respawnOn); } catch (e) {} finally { swSync = false; }
   });
 }
 function txt(v) { return String(v.getText()); }
@@ -107,7 +108,7 @@ function fwFit(w) {                      // cap the panel body to the screen hei
         w.bodyIn.measure(android.view.View.MeasureSpec.makeMeasureSpec(Math.round(190 * sc.d), android.view.View.MeasureSpec.EXACTLY),
                          android.view.View.MeasureSpec.makeMeasureSpec(0, android.view.View.MeasureSpec.UNSPECIFIED));
         var full = w.bodyIn.getMeasuredHeight();
-        var hdrH = w.hdr.getHeight() > 0 ? w.hdr.getHeight() : Math.round(40 * sc.d);
+        var hdrH = (w.hdr.getHeight() > 0 ? w.hdr.getHeight() : Math.round(40 * sc.d)) + (w.lg.getHeight() > 0 ? w.lg.getHeight() : Math.round(40 * sc.d));
         var maxH = sc.h - hdrH - Math.round(24 * sc.d);
         var lp = w.body.getLayoutParams();
         lp.height = full > maxH ? maxH : -2;      // -2 = wrap_content when it fits (portrait)
@@ -131,10 +132,10 @@ function buildPanel() {
     <vertical w="190" bg="#f01a1a24">
       <horizontal id="hdr" bg="#1a1a24" padding="3 3" gravity="center_vertical">
         <text id="btnRun" text="&#9654;" textSize="16sp" textColor="#ffffff" bg="#2e7d32" w="32" h="32" gravity="center"/>
-        <text id="btnResp" text="R" textSize="14sp" textColor="#94a3b8" bg="#2d2d3a" w="32" h="32" gravity="center" marginLeft="3"/>
         <text id="st" text="Idle" textSize="12sp" textColor="#94a3b8" w="0" layout_weight="1" gravity="center" maxLines="1"/>
         <text id="btnMin" text="&#9650;" textSize="13sp" textColor="#e2e8f0" bg="#2d2d3a" w="32" h="32" gravity="center"/>
       </horizontal>
+      <text id="lg" text="" textSize="9sp" textColor="#9ca3af" bg="#0b0b14" padding="4" minHeight="34" maxLines="3" ellipsize="end"/>
       <scroll id="body">
       <vertical id="bodyIn" padding="6 1">
         <text text="SAVED SPOT" textSize="10sp" textColor="#64a8ff" textStyle="bold"/>
@@ -173,6 +174,7 @@ function buildPanel() {
         <text text="SUB-PASSWORD" textSize="10sp" textColor="#64a8ff" textStyle="bold" marginTop="3"/>
         <input id="inSub" inputType="numberPassword" hint="saved on this phone only" textColor="#f8fafc" textSize="12sp" padding="2"/>
         <Switch id="cbAuto" text="Tap AUTO only if off" textSize="11sp" textColor="#e2e8f0" marginTop="3"/>
+        <Switch id="swResp" text="Respawn watch (ON/OFF)" textSize="11sp" textColor="#e2e8f0" marginTop="3"/>
         <Switch id="cbConsole" text="Show console" textSize="11sp" textColor="#e2e8f0" marginTop="2"/>
         <horizontal marginTop="2">
           <button id="btnTest" text="TEST" textSize="10sp" w="0" layout_weight="1" h="32" padding="0" bg="#2f5fb3" textColor="#ffffff"/>
@@ -190,8 +192,6 @@ function buildPanel() {
           <button id="btnUpd" text="UPDATE" textSize="9sp" w="0" layout_weight="1" h="32" padding="0" bg="#2d2d3a" textColor="#e2e8f0"/>
           <button id="btnOwner" text="OWNER" textSize="9sp" w="0" layout_weight="1" h="32" padding="0" bg="#8a5a1a" textColor="#ffffff" visibility="gone"/>
         </horizontal>
-        <text text="LOG" textSize="10sp" textColor="#64a8ff" textStyle="bold" marginTop="3"/>
-        <text id="lg" text="" textSize="9sp" textColor="#9ca3af" bg="#0b0b14" padding="4" minHeight="50" maxLines="4" ellipsize="end"/>
       </vertical>
       </scroll>
     </vertical>
@@ -218,7 +218,13 @@ function buildPanel() {
   });
 
   fw.btnRun.click(function () { releaseFocus(); if (running) stopBot(); else startBot(false); });
-  fw.btnResp.click(function () { releaseFocus(); if (respawnOn) stopRespawn(); else startRespawn(); });
+  fw.swResp.setOnCheckedChangeListener(new android.widget.CompoundButton.OnCheckedChangeListener({
+    onCheckedChanged: function (b, on) {
+      if (swSync) return;
+      releaseFocus();
+      if (on) startRespawn(); else stopRespawn();
+    }
+  }));
   fw.btnTest.click(function () { releaseFocus(); startBot(true); });
   fw.btnSave.click(function () { releaseFocus(); readCfgFromUi(); toast("Saved"); });
   fw.btnQuit.click(function () { running = false; respawnOn = false; exit(); });
@@ -279,10 +285,10 @@ function openCabal() {
 }
 
 // ===== STARTUP: image detection - taps ONLY when the screen image is found =====
-// Templates are saved by the SNAP TAP / SNAP BTN buttons while that screen is showing.
+// Templates are the image files /storage/emulated/0/脚本/btn/rf_tpl_tap.png and /storage/emulated/0/脚本/btn/rf_tpl_start.png.
 var TPL = {
-  tap:   { file: "/sdcard/rf_tpl_tap.png",   cx: 1046, cy: 1000, hw: 300, hh: 40, img: null },  // "Please Tap the Screen" text area
-  start: { file: "/sdcard/rf_tpl_start.png", cx: 1796, cy: 1099, hw: 110, hh: 40, img: null }   // "Game start" button
+  tap:   { file: "/storage/emulated/0/脚本/btn/rf_tpl_tap.png",   cx: 1046, cy: 1000, hw: 300, hh: 40, img: null },  // "Please Tap the Screen" text area
+  start: { file: "/storage/emulated/0/脚本/btn/rf_tpl_start.png", cx: 1796, cy: 1099, hw: 110, hh: 40, img: null }   // "Game start" button
 };
 var TPL_THRESHOLD = 0.8;
 
@@ -304,32 +310,6 @@ function findTpl(key) {                 // returns [x, y] screen-px center of th
 function tapPx(m, label) {
   log("tap " + label + " m" + method + " " + m[0] + "," + m[1]);
   METHODS[method](m[0], m[1]);
-}
-
-// Save a template from the current screen (run while that screen is visible)
-function snapTemplate(key) {
-  threads.start(function () {
-    try {
-      if (!capReady) { try { hasRoot = (shell("id", true).code === 0); } catch (e) { hasRoot = false; } setupCapture(); }
-      if (!capReady) { log("snap: no screen capture"); return; }
-      ui.run(function () { fw.body.setVisibility(8); fw.btnMin.setText("\u25BC"); });  // hide panel so it isn't captured
-      sleep(1200);
-      var img = grab();
-      if (!img) { log("snap: no image"); return; }
-      var t = TPL[key], s = H / GH;
-      var c = toScreen([t.cx, t.cy]);
-      var w = Math.round(2 * t.hw * s), h = Math.round(2 * t.hh * s);
-      if (!LAND) { var tmp = w; w = h; h = tmp; }
-      var x = clamp(c[0] - Math.round(w / 2), 0, img.getWidth() - w);
-      var y = clamp(c[1] - Math.round(h / 2), 0, img.getHeight() - h);
-      var crop = images.clip(img, x, y, w, h);
-      images.save(crop, t.file);
-      crop.recycle(); img.recycle();
-      t.img = null;
-      log("saved " + key + " template " + w + "x" + h);
-      toast("Saved " + key + " template");
-    } catch (e) { log("snap err: " + e); }
-  });
 }
 
 // ===== AUTO SAVE SPOT =====
@@ -400,7 +380,7 @@ function waitForApp(pkg, timeout) {
   nap(1500);
 }
 function tapToStart() {
-  if (!getTpl("tap")) { log("no 'Please Tap' template - press SNAP TAP while that screen shows"); return false; }
+  if (!getTpl("tap")) { log("no 'Please Tap' template: /storage/emulated/0/脚本/btn/rf_tpl_tap.png not found"); return false; }
   setStatus("Waiting: tap screen", "#fbbf24");
   if (!waitUntil(function () { return !!findTpl("tap"); }, 45000, "Please Tap the Screen image")) return false;
   setStatus("Tap the screen", "#fbbf24");
@@ -409,7 +389,7 @@ function tapToStart() {
   return true;
 }
 function tapGameStart() {
-  if (!getTpl("start")) { log("no 'Game start' template - press SNAP BTN while that screen shows"); return false; }
+  if (!getTpl("start")) { log("no 'Game start' template: /storage/emulated/0/脚本/btn/rf_tpl_start.png not found"); return false; }
   setStatus("Waiting: Game start", "#fbbf24");
   var pos = null;
   if (!waitUntil(function () { pos = findTpl("start"); return !!pos; }, 45000, "Game start image")) return false;
@@ -602,6 +582,7 @@ function setStatus(t, color) {
 
 // ===== RUN CONTROL =====
 var running = false, worker = null;
+var swSync = false;
 var respawnOn = false, rworker = null, respBusy = false;   // respawn watch = its own switch (R button), not part of PLAY
 var hasRoot = false, capMode = "none", capReady = false;
 var W = 0, H = 0, LAND = true;
@@ -625,10 +606,7 @@ function refreshButtons() {
     try { if (dw) { dw.btnDgGo.setText(running ? "STOP" : "START DG"); dw.btnDgGo.setBackgroundColor(colors.parseColor(running ? "#7a2a2a" : "#2e7d32")); } } catch (e) {}
     fw.btnRun.setTextColor(colors.parseColor(running ? "#f87171" : "#4ade80"));
     fw.btnTest.setEnabled(!running);
-    try {
-      fw.btnResp.setBackgroundColor(colors.parseColor(respawnOn ? "#2e7d32" : "#2d2d3a"));
-      fw.btnResp.setTextColor(colors.parseColor(respawnOn ? "#ffffff" : "#94a3b8"));
-    } catch (e) {}
+    try { swSync = true; fw.swResp.setChecked(!!respawnOn); } catch (e) {} finally { swSync = false; }
   });
   if (!running) { if (respawnOn) setStatus("Watching for death", "#4ade80"); else setStatus("Idle", "#94a3b8"); }
 }
@@ -772,6 +750,8 @@ function respawn() {
 //   {t:"wait", ms}                                             plain wait
 // =====================================================================================================
 var DG_DIR = "/storage/emulated/0/脚本/btn/";
+// Entry-item icons (bag grid crops) named EXACTLY like the dungeon, e.g. "Chaos Arena Lv.7.png". The script finds the dungeon's ticket in the bag by this file.
+var DG_ICON_DIR = "/storage/emulated/0/脚本/dg_exact/";
 // Opening the Select Dungeon window (every dungeon starts with these two steps):
 //   1) OPTIONAL: tap the key's "Move" button (template dg_move.png, saved once in DG_DIR) -> the character walks to the
 //      dungeon entrance; waits DG_MOVE_WAIT ms for the trip. Skipped when the button is not on screen.
@@ -785,11 +765,11 @@ var P_DG_BAG = [2039, 50];                        // bag icon in the top-right H
 var P_DG_TAB = [1486, 457];                       // inventory tab IV (left edge of the bag window) where the dungeon tickets are - used when dg_tab.png is not saved
 var DG_BAG_SWIPE = [[1300, 850], [1300, 450]];   // game-space [from, to] swipe inside the bag grid - tune if your bag layout differs
 var DG_BAG_PAGES = 5;                            // max swipes while searching for the item
-function dgOpen(name, id) {
+function dgOpen(name, id, icon) {          // icon = file name (without .png) in DG_ICON_DIR; none -> <id>_item.png in DG_DIR
   return [
     { t: "tap", img: "dg_bag.png",  fallback: P_DG_BAG, label: "Open bag", timeout: 2000, after: 1500 },
     { t: "tap", img: "dg_tab.png", fallback: P_DG_TAB, label: "Bag tab IV (dungeon tickets)", timeout: 1500, after: 900 },
-    { t: "tap", img: id + "_item.png", label: "Find " + name + " in bag", timeout: 6000, after: 1200, scroll: true },
+    { t: "tap", img: icon ? DG_ICON_DIR + icon + ".png" : id + "_item.png", alt: id + "_item.png", label: "Find " + name + " in bag", timeout: 6000, after: 1200, scroll: true },
     { t: "tap", img: "dg_move.png", label: "Move to " + name + " entrance", timeout: 3000, after: DG_MOVE_WAIT, optional: true },
     { t: "tap", img: "dg_bag_close.png", label: "Close bag", timeout: 1500, after: 800, optional: true },
     { t: "pt",  p: DG_CENTER,        label: "Open Select Dungeon", after: 1500 },
@@ -798,7 +778,7 @@ function dgOpen(name, id) {
 }
 // Standard step list. Template names are <id>_enter / _confirm / _clear / _exit .png in DG_DIR.
 function dgStd(id, name) {
-  return dgOpen(name, id).concat([
+  return dgOpen(name, id, name).concat([
     { t: "tap",   img: id + "_enter.png",   alt: "dg_item_enter.png", label: "Enter " + name,   timeout: 30000 },
     { t: "tap",   img: id + "_confirm.png", label: "Confirm",         timeout: 12000, optional: true },
     { t: "wait",  ms: 8000 },
@@ -810,9 +790,9 @@ function dgStd(id, name) {
 // Dungeons (names/entry items from the bag tab VII tooltips). Roa stays ON by default; the rest start OFF.
 var DG_NAMES = [
   ["ic_underworld",    "Illusion Castle Underworld"],        // Copy of the Illusive Apocalypse
-  ["ic_underworld_ap", "IC Underworld Apocrypha"],           // Illusive Apocalypse (Apocrypha)
+  ["ic_underworld_ap", "Illusion Castle Underworld Apocrypha"],           // Illusive Apocalypse (Apocrypha)
   ["ic_radiant",       "Illusion Castle Radiant Hall"],      // Apocalypse of Other Dimension
-  ["ic_radiant_ap",    "IC Radiant Hall Apocrypha"],         // Apocalypse of Other Dimension (Apocrypha)
+  ["ic_radiant_ap",    "Illusion Castle Radiant Hall Apocrypha"],         // Apocalypse of Other Dimension (Apocrypha)
   ["volcanic",         "Volcanic Citadel"],                  // Seal of the Darkness
   ["abandoned",        "Abandoned City"],                    // Strange Liquid
   ["catacomb",         "Catacomb Frost (Awakened)"],         // Frozen Clue (Awakened)
@@ -824,7 +804,7 @@ var DG_NAMES = [
   ["maquinas",         "Maquinas Outpost"],                  // Hacked Code Disk
   ["ruina_weak",       "Weakened Ruina Station"],            // Copy of Muster Card
   ["ruina",            "Ruina Station"],                     // Muster Card : Ruina Station
-  ["tou_b1",           "Frozen Tower of Undead B1F"],        // Copy of Epaulet of Undead
+  ["tou_b1",           "Frozen Tower of Undead (B1F)"],        // Copy of Epaulet of Undead
   ["tou_b2",           "Tower of the Dead B2F"],             // Epaulet of Undead (B2F) Part1
   ["phantom",          "Edge of Phantom"],                   // Broken Epaulet of Undead
   ["forgotten_b1",     "Forgotten Temple B1F"],              // Muster Card : Forgotten Temple B1F
@@ -874,7 +854,7 @@ function dgGetOn() {
 }
 function dgImg(name) {                    // cached template; a missing file is retried next time (so you can add it while running)
   if (!dgImgs[name]) {
-    var p = DG_DIR + name;
+    var p = name.charAt(0) === "/" ? name : DG_DIR + name;   // absolute path = icon from DG_ICON_DIR
     try { if (files.exists(p)) dgImgs[name] = images.read(p); } catch (e) { log("DG tpl err: " + e); }
   }
   return dgImgs[name] || null;
@@ -891,7 +871,7 @@ function dgScaledImg(name, t) {
 function dgFind(img, name) {              // [x, y] screen-px center of the match, or null
   var t = dgImg(name);
   if (!t) {
-    if (!dgWarned[name]) { dgWarned[name] = 1; log("template not found: " + DG_DIR + name); }
+    if (!dgWarned[name]) { dgWarned[name] = 1; log("template not found: " + (name.charAt(0) === "/" ? name : DG_DIR + name)); }
     return null;
   }
   var vs = [t], sc = dgScaledImg(name, t);
@@ -1056,7 +1036,7 @@ function dgStep(st, dname) {              // -> "ok" | "skip" | "fail" | "dead"
   if (st.t === "pt")   { tapGame(st.p, st.label || "point"); nap(st.after || 800); return "ok"; }
   var label = st.label || st.img;
   if (!dgImg(st.img)) {
-    log("DG: template missing: " + DG_DIR + st.img);
+    log("DG: template missing: " + (st.img.charAt(0) === "/" ? st.img : DG_DIR + st.img));
     if (st.fallback) { tapGame(st.fallback, label + " (fixed point)"); nap(st.after || 1200); return "ok"; }
     if (!st.optional) dgWhy = "missing " + st.img;
     return st.optional ? "skip" : "fail";

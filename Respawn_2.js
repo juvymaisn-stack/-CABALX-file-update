@@ -5,7 +5,7 @@
 //   X / Y inputs + TEST. Tap an input to type, press the keyboard Done to release focus.
 
 // ===== VERSION =====
-var APP_VERSION = 13;          // bump this on every release you publish (whole number)
+var APP_VERSION = 14;          // bump this on every release you publish (whole number)
 
 // ===== GAME SPACE =====
 var GW = 2093, GH = 1177;

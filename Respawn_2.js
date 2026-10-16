@@ -5,7 +5,7 @@
 //   X / Y inputs + TEST. Tap an input to type, press the keyboard Done to release focus.
 
 // ===== VERSION =====
-var APP_VERSION = 12;          // bump this on every release you publish (whole number)
+var APP_VERSION = 13;          // bump this on every release you publish (whole number)
 
 // ===== GAME SPACE =====
 var GW = 2093, GH = 1177;
@@ -131,6 +131,7 @@ function buildPanel() {
     <vertical w="190" bg="#f01a1a24">
       <horizontal id="hdr" bg="#1a1a24" padding="3 3" gravity="center_vertical">
         <text id="btnRun" text="&#9654;" textSize="16sp" textColor="#ffffff" bg="#2e7d32" w="32" h="32" gravity="center"/>
+        <text id="btnResp" text="R" textSize="14sp" textColor="#94a3b8" bg="#2d2d3a" w="32" h="32" gravity="center" marginLeft="3"/>
         <text id="st" text="Idle" textSize="12sp" textColor="#94a3b8" w="0" layout_weight="1" gravity="center" maxLines="1"/>
         <text id="btnMin" text="&#9650;" textSize="13sp" textColor="#e2e8f0" bg="#2d2d3a" w="32" h="32" gravity="center"/>
       </horizontal>
@@ -217,9 +218,10 @@ function buildPanel() {
   });
 
   fw.btnRun.click(function () { releaseFocus(); if (running) stopBot(); else startBot(false); });
+  fw.btnResp.click(function () { releaseFocus(); if (respawnOn) stopRespawn(); else startRespawn(); });
   fw.btnTest.click(function () { releaseFocus(); startBot(true); });
   fw.btnSave.click(function () { releaseFocus(); readCfgFromUi(); toast("Saved"); });
-  fw.btnQuit.click(function () { running = false; exit(); });
+  fw.btnQuit.click(function () { running = false; respawnOn = false; exit(); });
   fw.btnSavePos.click(function () { releaseFocus(); autoSaveSpot(); });
   fw.btnDg.click(function () { releaseFocus(); openDG(); });
   fw.btnLogout.click(function () { releaseFocus(); doLogout(); });
@@ -336,6 +338,7 @@ function snapTemplate(key) {
 function isMarker(c) { var r = colors.red(c), g = colors.green(c), b = colors.blue(c); return r > 200 && g > 180 && b < 130; }
 function autoSaveSpot() {
   if (running) { toast("Press STOP first, then AUTO SAVE SPOT"); return; }
+  if (respawnOn) { toast("Turn R (respawn) off first, then AUTO SAVE SPOT"); return; }
   threads.start(function () {
     var hid = false;
     try {
@@ -418,8 +421,167 @@ function tapGameStart() {
     if (!pos) break;                     // button gone = it worked
     log("Game start still visible, tapping again");
   }
-  nap(ENTER_WORLD_WAIT);
+  waitEnterWorld();
   return true;
+}
+
+// ===== SUB-PASSWORD (PIN) - ported from the main script =====
+// Reads the keypad digits from the screen (the order can be shuffled), then taps your saved sub-password and OK.
+function fracIn(img, r, test, step, an) {
+  var n = 0, t = 0, st = step || 4;
+  for (var y = r[1]; y < r[3]; y += st) {
+    for (var x = r[0]; x < r[2]; x += st) {
+      t++;
+      if (test(pix(img, [x, y, an]))) n++;
+    }
+  }
+  return t ? n / t : 0;
+}
+function isBtnBlue(c) {
+  var r = colors.red(c), g = colors.green(c), b = colors.blue(c);
+  return b > 110 && (b - r) > 30 && (b - g) > 5 && r < 110;
+}
+function isTitleWhite(c) {
+  var r = colors.red(c), g = colors.green(c), b = colors.blue(c);
+  var mn = Math.min(r, g, b), mx = Math.max(r, g, b);
+  return mn > 130 && (mx - mn) < 40;
+}
+// ----- sub-password (PIN) dialog -----
+var R_PIN_RESET = [900, 864, 1195, 939];       // blue "Reset" button
+var R_PIN_TITLE = [875, 252, 1225, 287];       // "Enter Sub-Password" title text
+var P_PIN_OK = [735, 902], P_PIN_RESET = [1045, 902];
+// the 10 digit keys (game space). The keypad order can be shuffled, so digits are recognised from the image.
+var PIN_KEYS = [[689, 759], [689, 636], [831, 759], [831, 636], [973, 759], [973, 636],
+                [1115, 759], [1115, 636], [1258, 759], [1258, 636]];
+var PIN_TPL = {
+  "0": "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000111110000000000000000011111110000000000000000111011100000000000000001100011100000000000000111000111000000000000001110001110000000000000011100011100000000000000111000111000000000000001110001110000000000000011100011100000000000000011000111000000000000000111111100000000000000000111110000000000000000000111000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+  "1": "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000111000000000000000000011110000000000000000001111100000000000000000111111000000000000000000001110000000000000000000011100000000000000000000111000000000000000000001110000000000000000000011100000000000000000000111000000000000000000001110000000000000000000011100000000000000000000111000000000000000000000100000000000000000000000000000000000000000000000000000000000000000000000000000000",
+  "2": "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001100000000000000000001111110000000000000000111111110000000000000000100011100000000000000000000011000000000000000000001110000000000000000000011100000000000000000001110000000000000000000111000000000000000000011110000000000000000000111000000000000000000011100000000000000000001111111100000000000000011111111000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+  "3": "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001111110000000000000000111111110000000000000000100011100000000000000000000111000000000000000000001110000000000000000011111000000000000000000111100000000000000000001111110000000000000000000011100000000000000000000011000000000000000000001110000000000000001111111100000000000000011111110000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+  "4": "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000111000000000000000000001110000000000000000000111100000000000000000001111000000000000000000111110000000000000000011011100000000000000000110111000000000000000011001110000000000000000110011100000000000000011111111100000000000000111111111000000000000000000011100000000000000000000111000000000000000000000110000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+  "5": "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001111111000000000000000011111110000000000000000111000000000000000000001100000000000000000000011000000000000000000000111111000000000000000001111111000000000000000000001111000000000000000000001110000000000000000000011100000000000000000000111000000000000001111111100000000000000011111110000000000000000001111000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+  "6": "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000111100000000000000000111111000000000000000011111000000000000000000111000000000000000000001100000000000000000000111011100000000000000001111111100000000000000011110111100000000000000111000111000000000000001110001110000000000000011100011100000000000000011101110000000000000000111111100000000000000000011110000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+  "7": "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000111111111000000000000001111111110000000000000000000111100000000000000000000110000000000000000000011100000000000000000000110000000000000000000011100000000000000000000111000000000000000000001100000000000000000000111000000000000000000001100000000000000000000111000000000000000000001110000000000000000000011000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+  "8": "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000111110000000000000000011111110000000000000000110011100000000000000001100011000000000000000011001110000000000000000011111000000000000000000111110000000000000000011111110000000000000001110011100000000000000011100011100000000000000111000111000000000000001111111100000000000000001111111000000000000000000111000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+  "9": "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000011100000000000000000011111100000000000000001111111100000000000000011100011000000000000000111000111000000000000001110001110000000000000011100111100000000000000011111111000000000000000011101100000000000000000000011000000000000000000001110000000000000000000111100000000000000001111110000000000000000011110000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+};
+var pinBlocked = false;   // set when the game did not accept the PIN, so we never spam wrong attempts
+function isKeyWhite(c) { return Math.min(colors.red(c), colors.green(c), colors.blue(c)) > 150; }
+function keyGrid(img, cx, cy) {
+  var xs = 0, ys = 0, n = 0, x, y;
+  for (y = cy - 34; y <= cy + 34; y += 2)
+    for (x = cx - 34; x <= cx + 34; x += 2)
+      if (isKeyWhite(pix(img, [x, y]))) { xs += x; ys += y; n++; }
+  if (n < 15) return null;
+  var gx = Math.round(xs / n), gy = Math.round(ys / n), rows = [];
+  for (y = gy - 22; y <= gy + 22; y += 2) {
+    var row = [];
+    for (x = gx - 22; x <= gx + 22; x += 2) row.push(isKeyWhite(pix(img, [x, y])) ? 1 : 0);
+    rows.push(row);
+  }
+  return rows;   // 23 x 23
+}
+function tplRows(d) {
+  var str = PIN_TPL[d], rows = [];
+  for (var y = 0; y < 23; y++) {
+    var row = [];
+    for (var x = 0; x < 23; x++) row.push(str.charAt(y * 23 + x) === "1" ? 1 : 0);
+    rows.push(row);
+  }
+  return rows;
+}
+function iouShift(a, b) {
+  var best = 0;
+  for (var dy = -1; dy <= 1; dy++) {
+    for (var dx = -1; dx <= 1; dx++) {
+      var inter = 0, uni = 0;
+      for (var y = 0; y < 23; y++) {
+        for (var x = 0; x < 23; x++) {
+          var A = a[y][x] === 1, yy = y + dy, xx = x + dx;
+          var B = yy >= 0 && yy < 23 && xx >= 0 && xx < 23 && b[yy][xx] === 1;
+          if (A && B) inter++;
+          if (A || B) uni++;
+        }
+      }
+      var v = uni ? inter / uni : 0;
+      if (v > best) best = v;
+    }
+  }
+  return best;
+}
+// returns { "0": [x,y], ... } for the digits it could read with confidence
+function readKeypad(img) {
+  var tpls = {};
+  for (var d = 0; d <= 9; d++) tpls[d] = tplRows(d);
+  var found = {};
+  for (var i = 0; i < PIN_KEYS.length; i++) {
+    var g = keyGrid(img, PIN_KEYS[i][0], PIN_KEYS[i][1]);
+    if (!g) continue;
+    var b1 = 0, b1d = -1, b2 = 0;
+    for (var dd = 0; dd <= 9; dd++) {
+      var sc = iouShift(g, tpls[dd]);
+      if (sc > b1) { b2 = b1; b1 = sc; b1d = dd; } else if (sc > b2) { b2 = sc; }
+    }
+    if (b1 >= 0.6 && (b1 - b2) >= 0.04) found[b1d] = PIN_KEYS[i];
+    else log("key " + i + " unclear (" + b1.toFixed(2) + " / " + b2.toFixed(2) + ")");
+  }
+  return found;
+}
+function enterPin() {
+  var pin = String(getSubPass() || "");
+  if (!/^[0-9]{4,10}$/.test(pin)) { log("sub-password screen but no valid PIN set (4-10 digits)"); pinBlocked = true; return false; }
+  var img = grab();
+  if (!img) return false;
+  var keys = readKeypad(img);
+  img.recycle();
+  for (var i = 0; i < pin.length; i++) {
+    if (!keys[pin.charAt(i)]) {
+      log("could not read a keypad digit - not typing anything");
+      pinBlocked = true;
+      return false;
+    }
+  }
+  log("sub-password: typing PIN");
+  // NOTE: never tap the blue "Reset" button here - it is not "clear" and it changes the keypad / starts a reset,
+  // so the digit positions read above would be wrong. The dialog opens with an empty field.
+  for (var j = 0; j < pin.length; j++) {
+    var k = keys[pin.charAt(j)];
+    tapGame(k, "pin key");
+    nap(450);
+  }
+  tapGame(P_PIN_OK, "pin OK");
+  nap(3500);
+  return true;
+}
+
+function pinShowing() {                  // true while the "Enter Sub-Password" dialog is on screen
+  var img = grab();
+  if (!img) return false;
+  var ok = fracIn(img, R_PIN_RESET, isBtnBlue) > 0.5 && fracIn(img, R_PIN_TITLE, isTitleWhite) > 0.1;
+  img.recycle();
+  return ok;
+}
+function pinOnce() {                     // enter the PIN if the dialog is showing right now; true = handled
+  if (pinBlocked || !getSubPass() || !pinShowing()) return false;
+  if (enterPin() && !pinShowing()) return true;
+  pinBlocked = true;
+  log("sub-password dialog still open after OK - stopped to avoid wrong attempts");
+  return false;
+}
+// Used after "Game start": watch for the dialog for up to ENTER_WORLD_WAIT, type the PIN, then wait for the world to load.
+function waitEnterWorld() {
+  if (!getSubPass()) { nap(ENTER_WORLD_WAIT); return; }      // blank sub-password = skip
+  setStatus("Waiting: sub-password", "#fbbf24");
+  var end = Date.now() + ENTER_WORLD_WAIT;
+  while (Date.now() < end) {
+    if (pinShowing()) {
+      if (pinBlocked) { log("sub-password already failed this run - enter it by hand"); return; }
+      setStatus("Sub-password", "#fbbf24");
+      if (pinOnce()) nap(ENTER_WORLD_WAIT);                  // accepted: give the world time to load
+      return;
+    }
+    nap(700);
+  }
 }
 
 // ===== LOG / STATUS =====
@@ -440,17 +602,20 @@ function setStatus(t, color) {
 
 // ===== RUN CONTROL =====
 var running = false, worker = null;
+var respawnOn = false, rworker = null, respBusy = false;   // respawn watch = its own switch (R button), not part of PLAY
 var hasRoot = false, capMode = "none", capReady = false;
 var W = 0, H = 0, LAND = true;
 var METHODS = [], method = 0;
 
+var tlRole = new java.lang.ThreadLocal();      // "resp" on the respawn thread; every other thread follows `running`
+function alive() { return String(tlRole.get()) === "resp" ? respawnOn : running; }
 function nap(ms) {            // sleep that can be interrupted by STOP
   var end = Date.now() + ms;
   while (Date.now() < end) {
-    if (!running) throw "STOP";
+    if (!alive()) throw "STOP";
     sleep(Math.max(1, Math.min(100, end - Date.now())));
   }
-  if (!running) throw "STOP";
+  if (!alive()) throw "STOP";
 }
 
 function refreshButtons() {
@@ -460,8 +625,12 @@ function refreshButtons() {
     try { if (dw) { dw.btnDgGo.setText(running ? "STOP" : "START DG"); dw.btnDgGo.setBackgroundColor(colors.parseColor(running ? "#7a2a2a" : "#2e7d32")); } } catch (e) {}
     fw.btnRun.setTextColor(colors.parseColor(running ? "#f87171" : "#4ade80"));
     fw.btnTest.setEnabled(!running);
+    try {
+      fw.btnResp.setBackgroundColor(colors.parseColor(respawnOn ? "#2e7d32" : "#2d2d3a"));
+      fw.btnResp.setTextColor(colors.parseColor(respawnOn ? "#ffffff" : "#94a3b8"));
+    } catch (e) {}
   });
-  if (!running) setStatus("Idle", "#94a3b8");
+  if (!running) { if (respawnOn) setStatus("Watching for death", "#4ade80"); else setStatus("Idle", "#94a3b8"); }
 }
 
 // ===== SCREEN HELPERS =====
@@ -710,12 +879,29 @@ function dgImg(name) {                    // cached template; a missing file is 
   }
   return dgImgs[name] || null;
 }
+// Templates cropped from a 1177-px-high screen (the ones I make for you) are scaled down on smaller captures such as Redfinger 1280x720;
+// templates you cropped on this very device match as they are. Both versions are tried, the one that matched last time first.
+var TPL_REF_H = 1177, dgScaled = {}, dgPref = {}, dgWarned = {};
+function dgScaledImg(name, t) {
+  if (!H || Math.abs(H - TPL_REF_H) < 8) return null;
+  var k = H / TPL_REF_H, key = name + "@" + Math.round(k * 1000);
+  if (!dgScaled[key]) { try { dgScaled[key] = images.scale(t, k, k); } catch (e) { log("DG scale err: " + e); } }
+  return dgScaled[key] || null;
+}
 function dgFind(img, name) {              // [x, y] screen-px center of the match, or null
   var t = dgImg(name);
-  if (!t) return null;
-  var pt = null;
-  try { pt = images.findImage(img, t, { threshold: TPL_THRESHOLD }); } catch (e) { log("DG find err: " + e); }
-  return pt ? [Math.round(pt.x + t.getWidth() / 2), Math.round(pt.y + t.getHeight() / 2)] : null;
+  if (!t) {
+    if (!dgWarned[name]) { dgWarned[name] = 1; log("template not found: " + DG_DIR + name); }
+    return null;
+  }
+  var vs = [t], sc = dgScaledImg(name, t);
+  if (sc) { if (dgPref[name] === 1) vs = [sc, t]; else vs = [t, sc]; }
+  for (var i = 0; i < vs.length; i++) {
+    var v = vs[i], pt = null;
+    try { pt = images.findImage(img, v, { threshold: TPL_THRESHOLD }); } catch (e) { log("DG find err: " + e); }
+    if (pt) { dgPref[name] = (v === t) ? 0 : 1; return [Math.round(pt.x + v.getWidth() / 2), Math.round(pt.y + v.getHeight() / 2)]; }
+  }
+  return null;
 }
 function deadOn(img) {                    // same death-dialog test as dialogVisible(), on an image we already grabbed
   var a1 = pix(img, P_A1), a2 = pix(img, P_A2), b = pix(img, P_B);
@@ -819,11 +1005,10 @@ function claimLogin(img, t) {             // t = screen-px centre of the title t
 function genPopups(img) {                 // -> label of the pop-up handled, or null
   for (var i = 0; i < GEN_POPUPS.length; i++) {
     var pu = GEN_POPUPS[i];
-    if (!dgImg(pu.img)) continue;
     var pos = dgFind(img, pu.img);
     if (pos) { tapPx(pos, pu.label); log("auto " + pu.label); return pu.label; }
   }
-  if (dgImg("dg_login_title.png") && Date.now() - lastLogin > 120000) {
+  if (Date.now() - lastLogin > 120000) {
     var t = dgFind(img, "dg_login_title.png");
     if (t) { lastLogin = Date.now(); claimLogin(img, t); return "Daily Login Reward"; }
   }
@@ -832,7 +1017,6 @@ function genPopups(img) {                 // -> label of the pop-up handled, or 
 function dgPopups(img) {                  // taps the first pop-up button found on an already grabbed image -> label or null
   for (var i = 0; i < DG_POPUPS.length; i++) {
     var pu = DG_POPUPS[i];
-    if (!dgImg(pu.img)) continue;
     var pos = dgFind(img, pu.img);
     if (pos) {
       tapPx(pos, pu.label); log("DG: auto " + pu.label);
@@ -1069,51 +1253,61 @@ function buildMethods() {
   method = 0;
 }
 
+// one-time setup shared by PLAY and the respawn watch
+var initDone = false, initBusy = false;
+function ensureReady() {
+  while (initBusy) nap(300);
+  if (initDone) return;
+  initBusy = true;
+  try {
+    try { auto.waitFor(); } catch (e) { log("auto.waitFor: " + e); }
+    try { hasRoot = (shell("id", true).code === 0); } catch (e) { hasRoot = false; }
+    log("root: " + hasRoot);
+    setupCapture();
+    buildMethods();
+    initDone = (capMode !== "none");
+  } finally { initBusy = false; }
+}
+
+// "other" entry pop-ups (Hot Item, Daily Login...) - closes them until none shows up for a few seconds
+function startupPopups(maxMs) {
+  setStatus("Closing popups", "#fbbf24");
+  var t0 = Date.now(), last = Date.now();
+  while (Date.now() - t0 < maxMs) {
+    var img = grab();
+    if (!img) { nap(500); continue; }
+    var hit = null;
+    try { hit = genPopups(img); } finally { img.recycle(); }
+    if (hit) { last = Date.now(); nap(1200); continue; }
+    if (Date.now() - last > 6000) break;
+    nap(700);
+  }
+}
+
+// ===== PLAY button: open app -> "Please Tap the Screen" -> Game start -> sub-password -> other popups. Then it ENDS. =====
+// The respawn watch is NOT started from here - it has its own switch (the R button).
 function botMain(testOnly) {
   if (CFG.SHOW_CONSOLE) console.show();
-  log("== Respawn + Return (Redfinger) ==");
+  log("== Login: open app, tap, Game start, sub-password ==");
   setStatus("Starting...", "#fbbf24");
-  try { auto.waitFor(); } catch (e) { log("auto.waitFor: " + e); }
-
-  try { hasRoot = (shell("id", true).code === 0); } catch (e) { hasRoot = false; }
-  log("root: " + hasRoot);
-  setupCapture();
-  buildMethods();
-
+  ensureReady();
+  while (respBusy) nap(300);               // a respawn already in progress finishes first
   setStatus("Opening Cabal", "#fbbf24");
   var pkg = openCabal();
   waitForApp(pkg, 40000);
-  if (capMode !== "none") { tapToStart(); tapGameStart(); }
+  if (capMode === "none") { log("no capture available - allow screen capture for AutoX.js"); return; }
+  pinBlocked = false;
+  tapToStart(); tapGameStart(); pinOnce();
 
   if (testOnly) {
-    if (capMode === "none") { log("no capture available - allow screen capture for AutoX.js"); return; }
     log("TEST: running return-to-spot once");
     grab();
     returnToSpot();
     return;
   }
-
-  setStatus("Watching for death", "#4ade80");
-  while (running) {
-    try {
-      if (capMode === "none") {
-        log("no capture available - allow screen capture for AutoX.js");
-        nap(3000);
-      } else if (dialogVisible()) {
-        respawn();
-        if (running) setStatus("Watching for death", "#4ade80");
-      }
-      if (capMode !== "none" && Date.now() - lastGen > 2500) {
-        lastGen = Date.now();
-        var gi = grab();
-        if (gi) { try { genPopups(gi); } finally { gi.recycle(); } }
-      }
-    } catch (e) {
-      if (String(e) === "STOP") break;
-      log("loop err: " + e);
-    }
-    nap(CFG.CHECK_EVERY);
-  }
+  startupPopups(20000);
+  setStatus("Login done", "#4ade80");
+  log("login done" + (respawnOn ? "" : " - press R to watch for death"));
 }
 
 function startBot(testOnly) {
@@ -1134,6 +1328,52 @@ function stopBot() {
   if (!running) return;
   running = false;
   setStatus("Stopping...", "#fbbf24");
+}
+
+// ===== R button: respawn watch (own thread, own on/off) =====
+function respawnLoop() {
+  tlRole.set("resp");
+  ensureReady();
+  if (capMode === "none") { log("no capture available - allow screen capture for AutoX.js"); respawnOn = false; return; }
+  log("== Respawn watch ON ==");
+  setStatus("Watching for death", "#4ade80");
+  while (respawnOn) {
+    try {
+      if (running) { nap(1000); continue; }          // PLAY / DG / TEST is using the screen right now
+      if (dialogVisible()) {
+        respBusy = true;
+        try { respawn(); } finally { respBusy = false; }
+        if (respawnOn && !running) setStatus("Watching for death", "#4ade80");
+      }
+      if (Date.now() - lastGen > 2500) {
+        lastGen = Date.now();
+        var gi = grab();
+        if (gi) { try { genPopups(gi); } finally { gi.recycle(); } }
+      }
+    } catch (e) {
+      if (String(e) === "STOP") break;
+      log("loop err: " + e);
+    }
+    nap(CFG.CHECK_EVERY);
+  }
+}
+function startRespawn() {
+  if (respawnOn) return;
+  readCfgFromUi();
+  respawnOn = true;
+  refreshButtons();
+  rworker = threads.start(function () {
+    try { respawnLoop(); }
+    catch (e) { if (String(e) !== "STOP") log("respawn fatal: " + e); }
+    respawnOn = false; respBusy = false;
+    log("respawn watch off");
+    refreshButtons();
+  });
+}
+function stopRespawn() {
+  if (!respawnOn) return;
+  respawnOn = false;
+  refreshButtons();
 }
 
 
@@ -1397,6 +1637,13 @@ function loginWith(name, pw, keyIn, silent) {
         threads.start(function () { sleep(2500); toast("Updated to v" + APP_VERSION + " - resuming"); startBot(false); });
       }
     }
+    var rr2 = store.get("resume_resp", 0);
+    if (rr2) {
+      store.remove("resume_resp");
+      if (Date.now() - rr2 < 180000) {
+        threads.start(function () { sleep(3500); toast("Updated to v" + APP_VERSION + " - respawn back on"); startRespawn(); });
+      }
+    }
   } catch (e5) {}
   if (!silent) toast("Welcome, " + name);
   return true;
@@ -1406,6 +1653,7 @@ function loginWith(name, pw, keyIn, silent) {
 function kickOut(msg) {                 // expired / wrong device while running: stop everything and show the login again
   toast(msg);
   try { stopBot(); } catch (e) {}
+  try { stopRespawn(); } catch (e) {}
   var who = currentUser;
   try { fbSignOut(who); } catch (e) {}
   currentUser = "";
@@ -1436,6 +1684,7 @@ function startSession() {
 function doLogout() {
   var who = currentUser;
   try { stopBot(); } catch (e) {}
+  try { stopRespawn(); } catch (e) {}
   if (!acctAdmin) forgetLogin();          // a user who logs out on purpose is not signed in again at the next start
   threads.start(function () { fbSignOut(who); });
   currentUser = "";
@@ -1555,6 +1804,11 @@ function checkUpdate(manual) {
       try { store.put("resume_run", Date.now()); } catch (e4) {}
       running = false;
       for (var w1 = 0; w1 < 50 && worker && worker.isAlive(); w1++) sleep(100);
+    }
+    if (respawnOn) {                       // the respawn watch comes back by itself too
+      try { store.put("resume_resp", Date.now()); } catch (e4) {}
+      respawnOn = false;
+      for (var w2 = 0; w2 < 50 && rworker && rworker.isAlive(); w2++) sleep(100);
     }
     log("update: v" + ver + " installed - restarting");
     toast("Script updated to v" + ver + " - restarting");
@@ -1822,7 +2076,7 @@ function openOwner() {
 
 // ===== GO =====
 events.on("exit", function () {
-  running = false;
+  running = false; respawnOn = false;
   try { if (fw) fw.close(); } catch (e) {}
   try { if (lw) lw.close(); } catch (e) {}
   try { if (ow) ow.close(); } catch (e) {}

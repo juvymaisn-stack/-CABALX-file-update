@@ -5,7 +5,7 @@
 //   X / Y inputs + TEST. Tap an input to type, press the keyboard Done to release focus.
 
 // ===== VERSION =====
-var APP_VERSION = 19;          // bump this on every release you publish (whole number)
+var APP_VERSION = 20;          // bump this on every release you publish (whole number)
 
 // ===== GAME SPACE =====
 var GW = 2093, GH = 1177;
@@ -1408,7 +1408,10 @@ function respawnLoop() {
   setStatus("Watching for death", "#4ade80");
   while (respawnOn) {
     try {
-      if (running) { nap(1000); continue; }          // PLAY / DG / TEST is using the screen right now
+      if (running) {                                 // PLAY / DG / TEST is using the screen right now: only watch for the "Periodical Item Expired" popup
+        if (autoExpired()) log("expired popup cleared during run");
+        nap(1000); continue;
+      }
       if (dialogVisible()) {
         respBusy = true;
         try { respawn(); } finally { respBusy = false; }

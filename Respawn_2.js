@@ -5,7 +5,7 @@
 //   X / Y inputs + TEST. Tap an input to type, press the keyboard Done to release focus.
 
 // ===== VERSION =====
-var APP_VERSION = 24;          // bump this on every release you publish (whole number)
+var APP_VERSION = 25;          // bump this on every release you publish (whole number)
 
 // ===== GAME SPACE =====
 var GW = 2093, GH = 1177;
@@ -764,6 +764,100 @@ function refreshButtons() {
   if (!running) { if (respawnOn) setStatus("Watching for death", "#4ade80"); else setStatus("Idle", "#94a3b8"); }
 }
 
+// ===== AUTO FIT: detect the device screen + where the game is drawn, so positions and taps line up =====
+// 1) device  : real display size / density / rotation - so taps land even if the capture is scaled or this is another phone model.
+// 2) game view: the part of the capture that is not black letterbox / pillarbox bars (union of the last few frames, so one dark scene
+//               cannot shrink it). Game positions are mapped into that area, so a screen that is not exactly 16:9 still lines up.
+// Set AUTO_FIT = false to go back to "the whole capture is the game screen".
+var AUTO_FIT = true;
+var DEV = { rw: 0, rh: 0, dpi: 0, rot: 0, name: "" };
+var VIEW = null;                         // game view in landscape space {x, y, w, h} (capture px); null = the whole capture
+var TAPK = [1, 1];                       // capture px -> tap px (landscape X, Y); [1, 1] = identical
+var fitSig = "", fitN = 0, fitLast = 0, fitLog = "", fitBoxes = [];
+
+function readDevice() {
+  var rw = 0, rh = 0, dpi = 0, rot = 0, nm = "";
+  try {
+    var d = context.getSystemService(android.content.Context.WINDOW_SERVICE).getDefaultDisplay();
+    var pt = new android.graphics.Point(); d.getRealSize(pt);
+    var dm = new android.util.DisplayMetrics(); d.getRealMetrics(dm);
+    rw = pt.x; rh = pt.y; dpi = dm.densityDpi; rot = d.getRotation();
+  } catch (e) {}
+  try { nm = String(device.brand) + " " + String(device.model); } catch (e2) {}
+  DEV = { rw: rw, rh: rh, dpi: dpi, rot: rot, name: nm };
+}
+function calcTapScale() {                // capture px -> real display px (only when they really differ)
+  TAPK = [1, 1];
+  if (!AUTO_FIT || !(DEV.rw > 0 && DEV.rh > 0) || !W || !H) return;
+  if ((DEV.rw >= DEV.rh) !== LAND) { log("FIT: capture and display have different orientation - taps not rescaled"); return; }
+  var kx = Math.max(DEV.rw, DEV.rh) / W, ky = Math.min(DEV.rw, DEV.rh) / H;
+  if (kx < 0.2 || kx > 8 || ky < 0.2 || ky > 8) return;
+  if (Math.abs(kx - 1) < 0.015 && Math.abs(ky - 1) < 0.015) return;
+  TAPK = [kx, ky];
+}
+function capToTap(x, y) {
+  if (TAPK[0] === 1 && TAPK[1] === 1) return [x, y];
+  return LAND ? [Math.round(x * TAPK[0]), Math.round(y * TAPK[1])] : [Math.round(x * TAPK[1]), Math.round(y * TAPK[0])];
+}
+function nonBlack(c) { return colors.red(c) + colors.green(c) + colors.blue(c) > 45; }
+function scanView(img) {                 // bounding box of everything that is not (almost) pure black, in capture px, or null
+  var w = img.getWidth(), h = img.getHeight();
+  var nx = 48, ny = 27;                  // samples taken along a column / a row
+  function colHas(x) {
+    var n = 0, need = Math.max(2, Math.round(ny * 0.06));
+    for (var j = 0; j < ny; j++) { if (nonBlack(images.pixel(img, x, Math.min(h - 1, Math.round((j + 0.5) * h / ny))))) { if (++n >= need) return true; } }
+    return false;
+  }
+  function rowHas(y) {
+    var n = 0, need = Math.max(2, Math.round(nx * 0.06));
+    for (var i = 0; i < nx; i++) { if (nonBlack(images.pixel(img, Math.min(w - 1, Math.round((i + 0.5) * w / nx)), y))) { if (++n >= need) return true; } }
+    return false;
+  }
+  function edge(n, step, has, rev) {     // first index (from the start, or from the end if rev) that has content; refined to 1 px
+    var a = -1, k, p;
+    for (k = 0; k < n; k += step) { p = rev ? n - 1 - k : k; if (has(p)) { a = k; break; } }
+    if (a < 0) return -1;
+    var best = a;
+    for (k = a - 1; k > a - step && k >= 0; k--) { p = rev ? n - 1 - k : k; if (has(p)) best = k; else break; }
+    return rev ? n - 1 - best : best;
+  }
+  var sx = Math.max(2, Math.round(w / 120)), sy = Math.max(2, Math.round(h / 68));
+  var x0 = edge(w, sx, colHas, false), x1 = edge(w, sx, colHas, true);
+  var y0 = edge(h, sy, rowHas, false), y1 = edge(h, sy, rowHas, true);
+  if (x0 < 0 || x1 < 0 || y0 < 0 || y1 < 0 || x1 <= x0 || y1 <= y0) return null;
+  return { x0: x0, y0: y0, x1: x1, y1: y1 };
+}
+function mergeView(b) {                  // add one frame's box (landscape space), keep the last 8, VIEW = their union
+  var lb = LAND ? b : { x0: b.y0, y0: H - 1 - b.x1, x1: b.y1, y1: H - 1 - b.x0 };
+  var lw = lb.x1 - lb.x0 + 1, lh = lb.y1 - lb.y0 + 1, asp = lw / lh;
+  if (lw < W * 0.5 || lh < H * 0.5 || asp < 1.2 || asp > 2.8) return;      // not a believable game picture (loading / black screen)
+  fitBoxes.push(lb); if (fitBoxes.length > 8) fitBoxes.shift();
+  var u = { x0: 1e9, y0: 1e9, x1: -1, y1: -1 };
+  for (var i = 0; i < fitBoxes.length; i++) {
+    u.x0 = Math.min(u.x0, fitBoxes[i].x0); u.y0 = Math.min(u.y0, fitBoxes[i].y0);
+    u.x1 = Math.max(u.x1, fitBoxes[i].x1); u.y1 = Math.max(u.y1, fitBoxes[i].y1);
+  }
+  var uw = u.x1 - u.x0 + 1, uh = u.y1 - u.y0 + 1;
+  VIEW = (uw >= W * 0.985 && uh >= H * 0.985) ? null : { x: u.x0, y: u.y0, w: uw, h: uh };
+}
+function viewRect() { return VIEW ? VIEW : { x: 0, y: 0, w: W, h: H }; }
+function viewH() { return VIEW ? VIEW.h : H; }
+function fitSummary() {
+  return "FIT " + DEV.name + " | display " + DEV.rw + "x" + DEV.rh + "@" + DEV.dpi + " rot" + DEV.rot + " | capture " + W + "x" + H + (LAND ? "" : " portrait") +
+         " | game view " + (VIEW ? VIEW.x + "," + VIEW.y + " " + VIEW.w + "x" + VIEW.h : "full") + " | tap scale " + TAPK[0].toFixed(3) + "," + TAPK[1].toFixed(3);
+}
+function autoFit(img) {                  // called from every grab(): re-fits when the screen changes, then looks again now and then
+  if (!AUTO_FIT) return;
+  var sig = W + "x" + H + (LAND ? "L" : "P");
+  if (sig !== fitSig) { fitSig = sig; VIEW = null; fitBoxes = []; fitN = 0; fitLast = 0; fitLog = ""; readDevice(); calcTapScale(); }
+  var now = Date.now();
+  if (now - fitLast < (fitN < 6 ? 400 : 60000)) return;
+  fitLast = now; fitN++;
+  try { var b = scanView(img); if (b) mergeView(b); } catch (e) { log("fit err: " + e); }
+  var msg = fitSummary();
+  if (msg !== fitLog) { fitLog = msg; log(msg); }
+}
+
 // ===== SCREEN HELPERS =====
 function grab() {
   var img = null;
@@ -773,13 +867,17 @@ function grab() {
     var w = img.getWidth(), h = img.getHeight();
     W = Math.max(w, h); H = Math.min(w, h);
     LAND = (w >= h);
+    autoFit(img);
   }
   return img;
 }
+function gameToLand(p) {                 // game space -> landscape capture space, inside the detected game view
+  var v = viewRect(), s = v.h / GH;
+  return [v.x + v.w / 2 + (p[0] - GW / 2) * s, v.y + v.h / 2 + (p[1] - GH / 2) * s];
+}
 function toScreen(p) {
-  var s = H / GH;
-  if (LAND) return [Math.round(W / 2 + (p[0] - GW / 2) * s), Math.round(p[1] * s)];
-  return [Math.round(H - p[1] * s), Math.round(W / 2 + (p[0] - GW / 2) * s)];
+  var m = gameToLand(p);
+  return LAND ? [Math.round(m[0]), Math.round(m[1])] : [Math.round(H - m[1]), Math.round(m[0])];
 }
 function pix(img, p) {
   var m = toScreen(p);
@@ -1336,8 +1434,8 @@ function dgImg(name) {                    // cached template; a missing file is 
 // templates you cropped on this very device match as they are. Both versions are tried, the one that matched last time first.
 var TPL_REF_H = 1177, dgScaled = {}, dgPref = {}, dgWarned = {};
 function dgScaledImg(name, t) {
-  if (!H || Math.abs(H - TPL_REF_H) < 8) return null;
-  var k = H / TPL_REF_H, key = name + "@" + Math.round(k * 1000);
+  if (!H || Math.abs(viewH() - TPL_REF_H) < 8) return null;
+  var k = viewH() / TPL_REF_H, key = name + "@" + Math.round(k * 1000);
   if (!dgScaled[key]) { try { dgScaled[key] = images.scale(t, k, k); } catch (e) { log("DG scale err: " + e); } }
   return dgScaled[key] || null;
 }
@@ -1390,11 +1488,17 @@ function setupCapture() {
 }
 
 function buildMethods() {
+  var raw = [];
+  if (hasRoot) raw.push(function (x, y) { shell("input tap " + x + " " + y, true); });
+  raw.push(function (x, y) { press(x, y, 150); });
+  raw.push(function (x, y) { click(x, y); });
+  raw.push(function (x, y) { swipe(x, y, x + 1, y + 1, 150); });
   METHODS = [];
-  if (hasRoot) METHODS.push(function (x, y) { shell("input tap " + x + " " + y, true); });
-  METHODS.push(function (x, y) { press(x, y, 150); });
-  METHODS.push(function (x, y) { click(x, y); });
-  METHODS.push(function (x, y) { swipe(x, y, x + 1, y + 1, 150); });
+  for (var i = 0; i < raw.length; i++) {
+    METHODS.push((function (f) {         // every tap method gets capture px and converts them to real display px (AUTO FIT)
+      return function (x, y) { var t = capToTap(x, y); f(t[0], t[1]); };
+    })(raw[i]));
+  }
   method = 0;
 }
 

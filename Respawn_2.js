@@ -5,7 +5,7 @@
 //   X / Y inputs + TEST. Tap an input to type, press the keyboard Done to release focus.
 
 // ===== VERSION =====
-var APP_VERSION = 18;          // bump this on every release you publish (whole number)
+var APP_VERSION = 19;          // bump this on every release you publish (whole number)
 
 // ===== GAME SPACE =====
 var GW = 2093, GH = 1177;
@@ -621,6 +621,30 @@ function waitEnterWorld() {
     }
     nap(700);
   }
+}
+
+// ===== "Periodical Item Expired" popup -> tap OK =====
+// The popup has ONE wide blue OK button (game space ~x 640-1350, y 887-967). Checked by colour, no template image needed.
+// Never fires on the sub-password dialog (its blue Reset button is much narrower) or on the death dialog.
+var R_EXP_OK = [680, 900, 1300, 955];   // inside the OK button
+var P_EXP_OK = [1046, 927];             // centre of the OK button
+var lastExpTap = 0;
+function expiredShowing() {
+  var img = grab();
+  if (!img) return false;
+  try { return fracIn(img, R_EXP_OK, isBtnBlue, 4) >= 0.8; } finally { img.recycle(); }
+}
+function autoExpired() {                // true = the popup was there and OK was tapped
+  if (Date.now() - lastExpTap < 1000) return false;
+  if (!expiredShowing()) return false;
+  nap(250);                             // must still be there a moment later (no taps on transitions)
+  if (!expiredShowing() || pinShowing() || dialogVisible()) return false;
+  lastExpTap = Date.now();
+  setStatus("Item expired: OK", "#fbbf24");
+  log("Periodical Item Expired popup -> tap OK");
+  tapGame(P_EXP_OK, "expired OK");
+  nap(800);
+  return true;
 }
 
 // ===== LOG / STATUS =====
@@ -1390,6 +1414,8 @@ function respawnLoop() {
         try { respawn(); } finally { respBusy = false; }
         if (respawnOn && !running) setStatus("Watching for death", "#4ade80");
       } else if (autoPin()) {                        // sub-password dialog on screen -> type the saved PIN
+        if (respawnOn && !running) setStatus("Watching for death", "#4ade80");
+      } else if (autoExpired()) {                    // "Periodical Item Expired" popup -> tap OK
         if (respawnOn && !running) setStatus("Watching for death", "#4ade80");
       }
     } catch (e) {

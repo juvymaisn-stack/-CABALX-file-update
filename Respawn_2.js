@@ -5,7 +5,7 @@
 //   X / Y inputs + TEST. Tap an input to type, press the keyboard Done to release focus.
 
 // ===== VERSION =====
-var APP_VERSION = 22;          // bump this on every release you publish (whole number)
+var APP_VERSION = 23;          // bump this on every release you publish (whole number)
 
 // ===== GAME SPACE =====
 var GW = 2093, GH = 1177;
@@ -623,33 +623,37 @@ function waitEnterWorld() {
   }
 }
 
-// ===== "Periodical Item Expired" popup -> tap OK =====
-// The popup has ONE wide blue OK button (game space ~x 640-1350, y 887-967). Checked by colour, no template image needed.
+// ===== "Periodical Item Expired" popup -> tap the X in its top-right corner =====
+// Detected by the wide blue OK button at the bottom of the popup (game space ~x 680-1300, y 887-967), checked by colour.
 // Never fires on the sub-password dialog (its blue Reset button is much narrower) or on the death dialog.
-var R_EXP_OK = [680, 900, 1300, 955];   // inside the OK button
-var P_EXP_OK = [1046, 927];             // centre of the OK button
+var R_EXP_OK = [680, 900, 1300, 955];   // inside the OK button (used only to recognise the popup)
+var P_EXP_X = [1415, 233];              // the X in the popup's top-right corner
 var lastExpTap = 0;
+function isExpBlue(c) {                 // the OK button fades to a darker blue at the bottom + has white "OK" text, so a looser blue than isBtnBlue
+  var r = colors.red(c), g = colors.green(c), b = colors.blue(c);
+  return b >= 95 && (b - r) >= 40 && (b - g) >= 20 && r < 100;
+}
 function expiredShowing() {
   var img = grab();
   if (!img) return false;
-  try { return fracIn(img, R_EXP_OK, isBtnBlue, 4) >= 0.8; } finally { img.recycle(); }
+  try { return fracIn(img, R_EXP_OK, isExpBlue, 4) >= 0.7; } finally { img.recycle(); }
 }
-function autoExpired() {                // true = the popup was there and OK was tapped
+function autoExpired() {                // true = the popup was there and its X was tapped
   if (Date.now() - lastExpTap < 1000) return false;
   if (!expiredShowing()) return false;
   nap(250);                             // must still be there a moment later (no taps on transitions)
   if (!expiredShowing() || pinShowing() || dialogVisible()) return false;
   lastExpTap = Date.now();
-  setStatus("Item expired: OK", "#fbbf24");
-  log("Periodical Item Expired popup -> tap OK");
-  tapGame(P_EXP_OK, "expired OK");
+  setStatus("Item expired: close", "#fbbf24");
+  log("Periodical Item Expired popup -> tap X");
+  tapGame(P_EXP_X, "expired X");
   nap(800);
   return true;
 }
 
 // ===== "Unlimited Warp" popup (600 gems / Cancel) -> tap Cancel, then tap the X beside GPS =====
 // Checked by colour: blue "600" button on the left + slate-grey Cancel button on the right, both at the bottom of the dialog.
-// Never matches the expired popup (one wide OK button lower down), the sub-password dialog or the death dialog (other positions).
+// Never matches the sub-password dialog or the death dialog (other positions).
 var R_UW_BLUE = [700, 745, 1030, 795];    // inside the blue 600-gem button
 var R_UW_CANCEL = [1085, 745, 1415, 795]; // inside the Cancel button
 var P_UW_CANCEL = [1250, 771];            // centre of Cancel
@@ -1441,8 +1445,8 @@ function respawnLoop() {
   setStatus("Watching for death", "#4ade80");
   while (respawnOn) {
     try {
-      if (running) {                                 // PLAY / DG / TEST is using the screen right now: only watch for the "Periodical Item Expired" popup
-        if (autoExpired()) log("expired popup cleared during run");
+      if (running) {                                 // PLAY / DG / TEST is using the screen right now: only watch for the "Periodical Item Expired" and "Unlimited Warp" popups
+        if (autoExpired()) log("expired popup closed during run");
         else if (autoWarpPopup()) log("warp popup cleared during run");
         nap(1000); continue;
       }
@@ -1452,7 +1456,7 @@ function respawnLoop() {
         if (respawnOn && !running) setStatus("Watching for death", "#4ade80");
       } else if (autoPin()) {                        // sub-password dialog on screen -> type the saved PIN
         if (respawnOn && !running) setStatus("Watching for death", "#4ade80");
-      } else if (autoExpired()) {                    // "Periodical Item Expired" popup -> tap OK
+      } else if (autoExpired()) {                    // "Periodical Item Expired" popup -> tap its X
         if (respawnOn && !running) setStatus("Watching for death", "#4ade80");
       } else if (autoWarpPopup()) {                  // "Unlimited Warp" popup -> Cancel, then X beside GPS
         if (respawnOn && !running) setStatus("Watching for death", "#4ade80");

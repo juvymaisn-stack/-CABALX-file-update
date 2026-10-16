@@ -5,7 +5,7 @@
 //   X / Y inputs + TEST. Tap an input to type, press the keyboard Done to release focus.
 
 // ===== VERSION =====
-var APP_VERSION = 10;          // bump this on every release you publish (whole number)
+var APP_VERSION = 11;          // bump this on every release you publish (whole number)
 
 // ===== GAME SPACE =====
 var GW = 2093, GH = 1177;
@@ -1140,7 +1140,7 @@ function stopBot() {
 // =====================================================================================================
 // ===== ACCOUNT: LOGIN + AUTO SIGN-IN (Firebase - same accounts / keys / device lock as the main script) =====
 // =====================================================================================================
-// New accounts are created with REGISTER in the main script; here you log in with the same username / password / key.
+// New accounts are created with REGISTER in the main script; here you log in with username + password (the access key is only asked when the account is expired / has none).
 // A saved login signs in silently at the next start (the owner account only when "Auto sign in (owner)" is switched on).
 var FB = {
   apiKey: "AIzaSyBvUhQiUtxs7TADYZxaSaVE6oeNiYmPoy4",
@@ -1153,6 +1153,7 @@ var FS_DOC = "projects/" + FB.projectId + "/databases/(default)/documents";
 var REL_DOC = "config/respawn";   // release info of THIS script (the main script keeps config/script - never mixed up)
 var fbAuth = null, srvSkew = 0, acctExp = 0, acctAdmin = false, currentUser = "", badTries = 0, lockUntil = 0, sessThread = null, updBusy = false;
 var lw = null, ow = null;
+var needKeyBox = false;          // the access-key box in the login window stays hidden unless this account has no valid licence (expired / never had a key)
 
 function fbBody(res) { try { return JSON.parse(res.body.string()); } catch (e) { return {}; } }
 function nowMs() { return Date.now() + srvSkew; }
@@ -1360,8 +1361,15 @@ function loginWith(name, pw, keyIn, silent) {
     toast(dev === "OTHER" ? "This account is locked to another device" : "Can't verify device - check connection");
     return false;
   }
-  if (FB.requireKey && !acctAdmin) {              // owner (admin) accounts need no key
-    if (!ki) { fbDrop(); toast("Enter your access key first"); return false; }
+  if (FB.requireKey && !acctAdmin && !ki) {       // no key typed: fine for a registered account whose licence is still running
+    if (!(acctExp && nowMs() < acctExp)) {        // no licence yet / expired -> a key is needed (the key box appears)
+      fbDrop(); needKeyBox = true;
+      ui.run(function () { try { if (lw) lw.ikey.setVisibility(0); } catch (e) {} });
+      toast(acctExp ? "Account expired - enter a NEW key, then LOGIN" : "This account has no access key yet - enter one, then LOGIN");
+      return false;
+    }
+  }
+  if (FB.requireKey && !acctAdmin && ki) {        // a key was typed: check it / redeem it (renews the account)
     var mineShared = ki.multi && ki.list.split(",").indexOf(fbAuth.uid) >= 0;
     if (ki.multi ? mineShared : !!ki.usedBy) {    // used key: must be one of THIS account's keys
       if (!ki.multi && ki.usedBy !== fbAuth.uid) { fbDrop(); toast("This key belongs to another account"); return false; }
@@ -1419,7 +1427,7 @@ function startSession() {
             kickOut("Logged out by the owner"); return;
           }
         }
-        if (!acctAdmin && acctExp && nowMs() >= acctExp) { kickOut("Account expired - enter a new key to log in"); return; }
+        if (!acctAdmin && acctExp && nowMs() >= acctExp) { needKeyBox = true; kickOut("Account expired - enter a new key to log in"); return; }
       } catch (e) {}
       for (var w8 = 0; w8 < FB.checkEvery && fbAuth; w8 += 1000) sleep(1000);
     }
@@ -1458,7 +1466,7 @@ function showLogin() {
       <text id="lwTitle" text="LOGIN (drag here)" textSize="12sp" textColor="#64a8ff" textStyle="bold" bg="#1a1a24" padding="5"/>
       <input id="iuser" hint="username" inputType="text" textColor="#f8fafc" textSize="13sp" padding="3"/>
       <input id="ipass" hint="password" inputType="textPassword" textColor="#f8fafc" textSize="13sp" padding="3"/>
-      <input id="ikey" hint="access key" inputType="text" textColor="#f8fafc" textSize="13sp" padding="3"/>
+      <input id="ikey" visibility="gone" hint="access key (expired account only)" inputType="text" textColor="#f8fafc" textSize="13sp" padding="3"/>
       <button id="btnLogin" text="LOGIN" textSize="11sp" h="34" padding="0" bg="#2e7d32" textColor="#ffffff" marginTop="3"/>
       <horizontal marginTop="2">
         <button id="btnForget" text="FORGET SAVED" textSize="9sp" w="0" layout_weight="1" h="30" padding="0" bg="#2d2d3a" textColor="#e2e8f0"/>
@@ -1470,6 +1478,7 @@ function showLogin() {
   var w = lw;
   var c = loadLogin();
   if (c) { w.iuser.setText(c.u); w.ipass.setText(c.p); if (c.k) w.ikey.setText(c.k); }
+  if (needKeyBox) w.ikey.setVisibility(0);
   var ox = 0, oy = 0, wx = 0, wy = 0;
   w.lwTitle.setOnTouchListener(function (v, e) {
     var act = e.getAction();

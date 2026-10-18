@@ -5,7 +5,7 @@
 //   X / Y inputs + TEST. Tap an input to type, press the keyboard Done to release focus.
 
 // ===== VERSION =====
-var APP_VERSION = 25;          // bump this on every release you publish (whole number)
+var APP_VERSION = 26;          // bump this on every release you publish (whole number)
 
 // ===== GAME SPACE =====
 var GW = 2093, GH = 1177;
@@ -2274,9 +2274,10 @@ function kickOut(msg) {                 // expired / wrong device while running:
   var who = currentUser;
   try { fbSignOut(who); } catch (e) {}
   currentUser = "";
-  ui.run(function () { closeOwner(); closePanel(); showLogin(); });
+  ui.run(function () { closeOwner(); closeMsgSend(); closeMsgPopup(); closePanel(); showLogin(); });
 }
 function startSession() {
+  startMsgWatch();                        // admin messages pop up in the user panel
   if (sessThread) { try { sessThread.interrupt(); } catch (e) {} }
   sessThread = threads.start(function () {
     var n = 0;
@@ -2305,7 +2306,7 @@ function doLogout() {
   if (!acctAdmin) forgetLogin();          // a user who logs out on purpose is not signed in again at the next start
   threads.start(function () { fbSignOut(who); });
   currentUser = "";
-  closeOwner(); closePanel(); showLogin();
+  closeOwner(); closeMsgSend(); closeMsgPopup(); closePanel(); showLogin();
 }
 function closePanel() { closeDg(); try { if (fw) fw.close(); } catch (e) {} fw = null; }
 
@@ -2585,6 +2586,7 @@ function openOwner() {
       <button id="btnGhSave" text="SAVE" textSize="10sp" h="32" padding="0" bg="#2f7d4a" textColor="#ffffff" marginTop="3"/>
       <button id="btnGhPub" text="PUBLISH TO GITHUB" textSize="10sp" h="34" padding="0" bg="#24292f" textColor="#ffffff" marginTop="3"/>
       <button id="btnGhRel" text="RELEASE LATEST PATCH" textSize="10sp" h="34" padding="0" bg="#7a5a1a" textColor="#ffffff" marginTop="2"/>
+      <button id="btnMsgOpen" text="MESSAGE USERS" textSize="10sp" h="34" padding="0" bg="#2f5fb3" textColor="#ffffff" marginTop="2"/>
       <button id="btnOwClose" text="CLOSE" textSize="10sp" h="30" padding="0" bg="#2d2d3a" textColor="#e2e8f0" marginTop="2"/>
       <text id="ghOut" text="" textSize="10sp" textColor="#cfe3ff" padding="2"/>
     </vertical>
@@ -2688,7 +2690,123 @@ function openOwner() {
       out(msg);
     });
   });
+  w.btnMsgOpen.click(function () { try { w.disableFocus(); } catch (e) {} openMsgSend(); });
   w.btnOwClose.click(function () { closeOwner(); });
+}
+
+// =====================================================================================================
+// ===== ADMIN MESSAGE: the owner sends a message, it pops up in every user's panel =====
+// =====================================================================================================
+// Owner window -> MESSAGE USERS writes config/message {id, text, from}. Every signed-in user copy checks it every
+// MSG_POLL ms and shows a floating message panel once per message (the last seen id is kept on the phone).
+var MSG_DOC = "config/message";
+var MSG_POLL = 10000;                        // users look for a new message every 10 s
+var MSG_MAX_AGE = 7 * 24 * 3600 * 1000;      // a message older than this is never popped up for a fresh login
+var MSG_MAX_LEN = 500;
+var msgGen = 0, mpw = null, mw = null;
+
+function closeMsgPopup() { try { if (mpw) mpw.close(); } catch (e) {} mpw = null; }
+function closeMsgSend() { try { if (mw) mw.close(); } catch (e) {} mw = null; }
+
+function makeDraggable(w, handle) {
+  var ox = 0, oy = 0, wx = 0, wy = 0;
+  handle.setOnTouchListener(function (v, e) {
+    var act = e.getAction();
+    if (act == 0) { ox = e.getRawX(); oy = e.getRawY(); wx = w.getX(); wy = w.getY(); }
+    else if (act == 2) { dgPlace(w, wx + (e.getRawX() - ox), wy + (e.getRawY() - oy)); }
+    return true;
+  });
+}
+
+// ----- user side: the pop-up panel -----
+function showMsgPopup(from, text) {
+  ui.run(function () {
+    try {
+      if (mpw) { mpw.mpHdr.setText("MESSAGE FROM " + String(from || "ADMIN").toUpperCase()); mpw.mpText.setText(text); return; }
+      mpw = floaty.window(
+        <vertical w="260" bg="#f01a1a24" padding="6">
+          <text id="mpHdr" text="MESSAGE FROM ADMIN" textSize="11sp" textColor="#e0b84a" textStyle="bold" bg="#1a1a24" padding="5"/>
+          <scroll h="120" bg="#0b0b14" marginTop="3">
+            <text id="mpText" text="" textSize="13sp" textColor="#f8fafc" padding="6"/>
+          </scroll>
+          <button id="mpOk" text="OK" textSize="11sp" h="34" padding="0" bg="#2e7d32" textColor="#ffffff" marginTop="4"/>
+        </vertical>
+      );
+      var w = mpw, sc = dgScreen();
+      w.mpHdr.setText("MESSAGE FROM " + String(from || "ADMIN").toUpperCase());
+      w.mpText.setText(text);
+      w.setPosition(Math.max(0, Math.round((sc.w - 260 * sc.d) / 2)), Math.round(sc.h * 0.18));
+      makeDraggable(w, w.mpHdr);
+      w.mpOk.click(function () { closeMsgPopup(); });
+    } catch (e) { log("message popup err: " + e); }
+  });
+}
+function checkMessage() {
+  if (!fbAuth || acctAdmin) return;            // the owner is the sender, no pop-up for them
+  if (Date.now() > fbAuth.exp && !fbRefresh()) return;
+  var res = http.get("https://firestore.googleapis.com/v1/" + FS_DOC + "/" + MSG_DOC, { headers: { "Authorization": "Bearer " + fbAuth.idToken } });
+  if (res.statusCode !== 200) return;          // 404 = nothing sent yet
+  var f = fbBody(res).fields || {};
+  var id = f.id ? (parseFloat(f.id.integerValue || f.id.stringValue) || 0) : 0;
+  var text = (f.text && f.text.stringValue) || "", from = (f.from && f.from.stringValue) || "admin";
+  if (!id || !text) return;
+  var seen = num(store.get("msg_seen", "0"), 0);
+  if (id <= seen) return;
+  try { store.put("msg_seen", String(id)); } catch (e) {}
+  if (nowMs() - id > MSG_MAX_AGE) return;      // old message, just mark it as seen
+  toast("New message from " + from);
+  showMsgPopup(from, text);
+}
+function startMsgWatch() {
+  var my = ++msgGen;                           // a newer watcher (re-login) makes the older one stop
+  threads.start(function () {
+    while (fbAuth && my === msgGen) {
+      try { checkMessage(); } catch (e) { log("message check err: " + e); }
+      for (var w8 = 0; w8 < MSG_POLL && fbAuth && my === msgGen; w8 += 1000) sleep(1000);
+    }
+  });
+}
+
+// ----- owner side: the send window -----
+function sendAdminMessage(text) {              // returns a message for the owner
+  if (!fbAuth) return "Log in first";
+  if (!acctAdmin) return "Owner only";
+  var r = fbCommit([fsDoc(MSG_DOC, { id: { int: Math.round(nowMs()) }, text: text, from: currentUser }, ["updatedAt"])]);
+  if (!r || r.statusCode < 200 || r.statusCode >= 300) return "Send failed" + (r ? " (HTTP " + r.statusCode + ")" : "") + " - are the admin rules set for " + MSG_DOC + "?";
+  return "Sent - users see it within ~" + Math.round(MSG_POLL / 1000) + " s";
+}
+function openMsgSend() {
+  if (!acctAdmin) { toast("Owner only - log in with the owner account first"); return; }
+  if (mw) { closeMsgSend(); return; }
+  mw = floaty.window(
+    <vertical w="260" bg="#f01a1a24" padding="6">
+      <text id="mwHdr" text="MESSAGE TO ALL USERS (drag here)" textSize="11sp" textColor="#e0b84a" textStyle="bold" bg="#1a1a24" padding="5"/>
+      <input id="mwText" hint="Type the message" inputType="textMultiLine" minLines="3" maxLines="5" textColor="#f8fafc" textSize="12sp" padding="3"/>
+      <button id="mwSend" text="SEND" textSize="11sp" h="34" padding="0" bg="#2f7d4a" textColor="#ffffff" marginTop="3"/>
+      <button id="mwClose" text="CLOSE" textSize="10sp" h="30" padding="0" bg="#2d2d3a" textColor="#e2e8f0" marginTop="2"/>
+      <text id="mwOut" text="" textSize="10sp" textColor="#cfe3ff" padding="2"/>
+    </vertical>
+  );
+  var w = mw;
+  w.setPosition(40, 140);
+  makeDraggable(w, w.mwHdr);
+  w.mwText.on("touch_down", function () { w.requestFocus(); w.mwText.requestFocus(); });
+  w.mwSend.click(function () {
+    try { w.disableFocus(); } catch (e) {}
+    var t = String(w.mwText.getText()).trim();
+    if (!t) { toast("Type a message first"); return; }
+    if (t.length > MSG_MAX_LEN) { toast("Max " + MSG_MAX_LEN + " characters"); return; }
+    toast("Sending...");
+    threads.start(function () {
+      var msg;
+      try { msg = sendAdminMessage(t); } catch (e) { msg = "Send error: " + e; }
+      toast(msg);
+      ui.run(function () {
+        try { if (mw) { mw.mwOut.setText(msg); if (msg.indexOf("Sent") === 0) mw.mwText.setText(""); } } catch (e) {}
+      });
+    });
+  });
+  w.mwClose.click(function () { closeMsgSend(); });
 }
 
 // ===== GO =====
@@ -2698,6 +2816,8 @@ events.on("exit", function () {
   try { if (dgw) dgw.close(); } catch (e) {}
   try { if (lw) lw.close(); } catch (e) {}
   try { if (ow) ow.close(); } catch (e) {}
+  try { if (mw) mw.close(); } catch (e) {}
+  try { if (mpw) mpw.close(); } catch (e) {}
 });
 try {                                    // ask for "draw over other apps" once, before any window is built
   if (!floaty.checkPermission()) {

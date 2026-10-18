@@ -5,7 +5,7 @@
 //   X / Y inputs + TEST. Tap an input to type, press the keyboard Done to release focus.
 
 // ===== VERSION =====
-var APP_VERSION = 26;          // bump this on every release you publish (whole number)
+var APP_VERSION = 27;          // bump this on every release you publish (whole number)
 
 // ===== GAME SPACE =====
 var GW = 2093, GH = 1177;
@@ -2719,26 +2719,32 @@ function makeDraggable(w, handle) {
 }
 
 // ----- user side: the pop-up panel -----
+var MSG_SHOW_MS = 3000;                      // the pop-up closes by itself after 3 s
+var mpGen = 0;
 function showMsgPopup(from, text) {
+  var my = ++mpGen;                            // a newer message restarts the 3 s timer
   ui.run(function () {
     try {
-      if (mpw) { mpw.mpHdr.setText("MESSAGE FROM " + String(from || "ADMIN").toUpperCase()); mpw.mpText.setText(text); return; }
+      var head = String(from || "ADMIN").toUpperCase();
+      if (mpw) { mpw.mpHdr.setText(head); mpw.mpText.setText(text); return; }
       mpw = floaty.window(
-        <vertical w="260" bg="#f01a1a24" padding="6">
-          <text id="mpHdr" text="MESSAGE FROM ADMIN" textSize="11sp" textColor="#e0b84a" textStyle="bold" bg="#1a1a24" padding="5"/>
-          <scroll h="120" bg="#0b0b14" marginTop="3">
-            <text id="mpText" text="" textSize="13sp" textColor="#f8fafc" padding="6"/>
+        <vertical w="170" bg="#ee1a1a24" padding="3">
+          <text id="mpHdr" text="ADMIN" textSize="9sp" textColor="#e0b84a" textStyle="bold" padding="2"/>
+          <scroll h="46">
+            <text id="mpText" text="" textSize="11sp" textColor="#f8fafc" padding="2"/>
           </scroll>
-          <button id="mpOk" text="OK" textSize="11sp" h="34" padding="0" bg="#2e7d32" textColor="#ffffff" marginTop="4"/>
         </vertical>
       );
       var w = mpw, sc = dgScreen();
-      w.mpHdr.setText("MESSAGE FROM " + String(from || "ADMIN").toUpperCase());
+      w.mpHdr.setText(head);
       w.mpText.setText(text);
-      w.setPosition(Math.max(0, Math.round((sc.w - 260 * sc.d) / 2)), Math.round(sc.h * 0.18));
-      makeDraggable(w, w.mpHdr);
-      w.mpOk.click(function () { closeMsgPopup(); });
+      w.setPosition(Math.max(0, Math.round((sc.w - 170 * sc.d) / 2)), Math.round(sc.h * 0.08));
+      w.mpHdr.click(function () { closeMsgPopup(); });     // tap the header to close early
     } catch (e) { log("message popup err: " + e); }
+  });
+  threads.start(function () {
+    sleep(MSG_SHOW_MS);
+    if (my === mpGen) ui.run(function () { closeMsgPopup(); });
   });
 }
 function checkMessage() {

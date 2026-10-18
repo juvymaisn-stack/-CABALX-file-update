@@ -5,7 +5,7 @@
 //   X / Y inputs + TEST. Tap an input to type, press the keyboard Done to release focus.
 
 // ===== VERSION =====
-var APP_VERSION = 28;          // bump this on every release you publish (whole number)
+var APP_VERSION = 29;          // bump this on every release you publish (whole number)
 
 // ===== GAME SPACE =====
 var GW = 2093, GH = 1177;
@@ -935,7 +935,15 @@ function ensureAuto() {
   if (CFG.AUTO_CHECK && autoOn()) { log("auto attack already ON"); return; }
   tapGame(P_AUTO, "AUTO attack");
   nap(800);
-  if (CFG.AUTO_CHECK) log(autoOn() ? "auto attack ON" : "auto still looks off - check P_AUTO / ring points");
+  if (!CFG.AUTO_CHECK) return;             // can't verify -> single tap only
+  // still inactive? tap the button again (up to 2 more times)
+  for (var t = 0; t < 2; t++) {
+    if (autoOn()) { log("auto attack ON"); return; }
+    log("auto still OFF - tapping again (" + (t + 2) + ")");
+    tapGame(P_AUTO, "AUTO attack retry");
+    nap(800);
+  }
+  log(autoOn() ? "auto attack ON" : "auto still looks off - check P_AUTO / ring points");
 }
 
 // ===== RETURN TO SPOT =====

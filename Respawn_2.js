@@ -5,7 +5,7 @@
 //   X / Y inputs + TEST. Tap an input to type, press the keyboard Done to release focus.
 
 // ===== VERSION =====
-var APP_VERSION = 27;          // bump this on every release you publish (whole number)
+var APP_VERSION = 28;          // bump this on every release you publish (whole number)
 
 // ===== GAME SPACE =====
 var GW = 2093, GH = 1177;
@@ -2274,7 +2274,7 @@ function kickOut(msg) {                 // expired / wrong device while running:
   var who = currentUser;
   try { fbSignOut(who); } catch (e) {}
   currentUser = "";
-  ui.run(function () { closeOwner(); closeMsgSend(); closeMsgPopup(); closePanel(); showLogin(); });
+  ui.run(function () { closeOwner(); closeMsgSend(); closeMsgPopup(); closeReply(); closePanel(); showLogin(); });
 }
 function startSession() {
   startMsgWatch();                        // admin messages pop up in the user panel
@@ -2306,7 +2306,7 @@ function doLogout() {
   if (!acctAdmin) forgetLogin();          // a user who logs out on purpose is not signed in again at the next start
   threads.start(function () { fbSignOut(who); });
   currentUser = "";
-  closeOwner(); closeMsgSend(); closeMsgPopup(); closePanel(); showLogin();
+  closeOwner(); closeMsgSend(); closeMsgPopup(); closeReply(); closePanel(); showLogin();
 }
 function closePanel() { closeDg(); try { if (fw) fw.close(); } catch (e) {} fw = null; }
 
@@ -2718,34 +2718,110 @@ function makeDraggable(w, handle) {
   });
 }
 
-// ----- user side: the pop-up panel -----
-var MSG_SHOW_MS = 3000;                      // the pop-up closes by itself after 3 s
-var mpGen = 0;
-function showMsgPopup(from, text) {
-  var my = ++mpGen;                            // a newer message restarts the 3 s timer
+// ----- user side: the pop-up panel (with a REPLY button) -----
+var MSG_SHOW_MS = 3000;                      // a message from the admin closes by itself after 3 s (touch it to keep it open)
+var REPLY_SHOW_MS = 8000;                    // a user reply shows 8 s on the owner's screen
+var REPLY_MAX = 200, REPLY_COOLDOWN = 5000;
+var mpGen = 0, rw = null, lastReplyAt = 0;
+function closeReply() { try { if (rw) rw.close(); } catch (e) {} rw = null; }
+
+function showMsgPopup(from, text, ms, canReply) {
+  var my = ++mpGen;                            // a newer message restarts the timer
   ui.run(function () {
     try {
       var head = String(from || "ADMIN").toUpperCase();
-      if (mpw) { mpw.mpHdr.setText(head); mpw.mpText.setText(text); return; }
+      if (mpw) { mpw.mpHdr.setText(head); mpw.mpText.setText(text); mpw.mpReply.setVisibility(canReply ? 0 : 8); return; }
       mpw = floaty.window(
         <vertical w="170" bg="#ee1a1a24" padding="3">
           <text id="mpHdr" text="ADMIN" textSize="9sp" textColor="#e0b84a" textStyle="bold" padding="2"/>
-          <scroll h="46">
+          <scroll id="mpSc" h="46">
             <text id="mpText" text="" textSize="11sp" textColor="#f8fafc" padding="2"/>
           </scroll>
+          <button id="mpReply" text="REPLY" textSize="9sp" h="26" padding="0" bg="#2f5fb3" textColor="#ffffff" marginTop="2"/>
         </vertical>
       );
       var w = mpw, sc = dgScreen();
       w.mpHdr.setText(head);
       w.mpText.setText(text);
+      w.mpReply.setVisibility(canReply ? 0 : 8);
       w.setPosition(Math.max(0, Math.round((sc.w - 170 * sc.d) / 2)), Math.round(sc.h * 0.08));
-      w.mpHdr.click(function () { closeMsgPopup(); });     // tap the header to close early
+      w.mpHdr.click(function () { closeMsgPopup(); });                        // tap the header to close early
+      w.mpSc.setOnTouchListener(function () { mpGen++; return false; });      // touching the text keeps it open
+      w.mpReply.setOnTouchListener(function () { mpGen++; return false; });   // so there is time to press REPLY
+      w.mpReply.click(function () { closeMsgPopup(); openReply(); });
     } catch (e) { log("message popup err: " + e); }
   });
   threads.start(function () {
-    sleep(MSG_SHOW_MS);
+    sleep(ms || MSG_SHOW_MS);
     if (my === mpGen) ui.run(function () { closeMsgPopup(); });
   });
+}
+
+// ----- user side: the reply window -----
+function sendReply(text) {                     // returns a message for the user
+  if (!fbAuth) return "Log in first";
+  var at = Math.round(nowMs());
+  var r = fbCommit([fsDoc("replies/" + fbAuth.uid + "_" + at,
+                          { uid: fbAuth.uid, name: String(currentUser || "user").slice(0, 40), text: text, at: { int: at } }, [], true)]);
+  if (!r || r.statusCode < 200 || r.statusCode >= 300) return "Reply failed" + (r ? " (HTTP " + r.statusCode + ")" : "");
+  return "Reply sent";
+}
+function openReply() {
+  if (rw) { closeReply(); }
+  rw = floaty.window(
+    <vertical w="200" bg="#ee1a1a24" padding="4">
+      <text id="rwHdr" text="REPLY TO ADMIN (drag here)" textSize="9sp" textColor="#e0b84a" textStyle="bold" padding="2"/>
+      <input id="rwText" hint="Your reply" inputType="textMultiLine" minLines="2" maxLines="3" textColor="#f8fafc" textSize="12sp" padding="3"/>
+      <horizontal marginTop="3">
+        <button id="rwSend" text="SEND" layout_weight="1" textSize="11sp" h="32" padding="0" bg="#2f7d4a" textColor="#ffffff"/>
+        <button id="rwClose" text="X" w="40" textSize="11sp" h="32" padding="0" bg="#2d2d3a" textColor="#e2e8f0"/>
+      </horizontal>
+    </vertical>
+  );
+  var w = rw, sc = dgScreen();
+  w.setPosition(Math.max(0, Math.round((sc.w - 200 * sc.d) / 2)), Math.round(sc.h * 0.08));
+  makeDraggable(w, w.rwHdr);
+  w.rwText.on("touch_down", function () { w.requestFocus(); w.rwText.requestFocus(); });
+  w.rwSend.click(function () {
+    try { w.disableFocus(); } catch (e) {}
+    var t = String(w.rwText.getText()).trim();
+    if (!t) { toast("Type a reply first"); return; }
+    if (t.length > REPLY_MAX) { toast("Max " + REPLY_MAX + " characters"); return; }
+    if (Date.now() - lastReplyAt < REPLY_COOLDOWN) { toast("Wait a few seconds before the next reply"); return; }
+    lastReplyAt = Date.now();
+    toast("Sending...");
+    threads.start(function () {
+      var msg;
+      try { msg = sendReply(t); } catch (e) { msg = "Reply error: " + e; }
+      toast(msg);
+      if (msg === "Reply sent") ui.run(function () { closeReply(); });
+    });
+  });
+  w.rwClose.click(function () { closeReply(); });
+}
+
+// ----- owner side: user replies pop up on the owner's screen -----
+function checkReplies() {
+  if (!fbAuth || !acctAdmin) return;
+  if (Date.now() > fbAuth.exp && !fbRefresh()) return;
+  var res = http.get("https://firestore.googleapis.com/v1/" + FS_DOC + "/replies?pageSize=10&orderBy=" + encodeURIComponent("at desc"),
+                     { headers: { "Authorization": "Bearer " + fbAuth.idToken } });
+  if (res.statusCode !== 200) return;
+  var docs = fbBody(res).documents || [];
+  var seen = num(store.get("reply_seen", "0"), 0), top = seen, rows = [];
+  for (var i = 0; i < docs.length; i++) {
+    var f = docs[i].fields || {};
+    var at = f.at ? (parseFloat(f.at.integerValue) || 0) : 0;
+    if (!at || at <= seen) continue;
+    if (at > top) top = at;
+    if (nowMs() - at > MSG_MAX_AGE) continue;
+    rows.push({ at: at, t: ((f.name && f.name.stringValue) || "user") + ": " + ((f.text && f.text.stringValue) || "") });
+  }
+  if (top > seen) { try { store.put("reply_seen", String(top)); } catch (e) {} }
+  if (!rows.length) return;
+  rows.sort(function (x, y) { return x.at - y.at; });
+  toast("Reply from user");
+  showMsgPopup("REPLY", rows.map(function (r) { return r.t; }).join("\n"), REPLY_SHOW_MS, false);
 }
 function checkMessage() {
   if (!fbAuth || acctAdmin) return;            // the owner is the sender, no pop-up for them
@@ -2761,13 +2837,14 @@ function checkMessage() {
   try { store.put("msg_seen", String(id)); } catch (e) {}
   if (nowMs() - id > MSG_MAX_AGE) return;      // old message, just mark it as seen
   toast("New message from " + from);
-  showMsgPopup(from, text);
+  showMsgPopup(from, text, MSG_SHOW_MS, true);
 }
 function startMsgWatch() {
   var my = ++msgGen;                           // a newer watcher (re-login) makes the older one stop
   threads.start(function () {
     while (fbAuth && my === msgGen) {
       try { checkMessage(); } catch (e) { log("message check err: " + e); }
+      try { checkReplies(); } catch (e) { log("reply check err: " + e); }
       for (var w8 = 0; w8 < MSG_POLL && fbAuth && my === msgGen; w8 += 1000) sleep(1000);
     }
   });
@@ -2824,6 +2901,7 @@ events.on("exit", function () {
   try { if (ow) ow.close(); } catch (e) {}
   try { if (mw) mw.close(); } catch (e) {}
   try { if (mpw) mpw.close(); } catch (e) {}
+  try { if (rw) rw.close(); } catch (e) {}
 });
 try {                                    // ask for "draw over other apps" once, before any window is built
   if (!floaty.checkPermission()) {

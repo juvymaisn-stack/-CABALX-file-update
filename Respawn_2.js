@@ -5,7 +5,7 @@
 //   X / Y inputs + TEST. Tap an input to type, press the keyboard Done to release focus.
 
 // ===== VERSION =====
-var APP_VERSION = 29;          // bump this on every release you publish (whole number)
+var APP_VERSION = 30;          // bump this on every release you publish (whole number)
 
 // ===== GAME SPACE =====
 var GW = 2093, GH = 1177;
@@ -192,6 +192,9 @@ function buildPanel() {
           <button id="btnUpd" text="UPDATE" textSize="9sp" w="0" layout_weight="1" h="32" padding="0" bg="#2d2d3a" textColor="#e2e8f0"/>
           <button id="btnOwner" text="OWNER" textSize="9sp" w="0" layout_weight="1" h="32" padding="0" bg="#8a5a1a" textColor="#ffffff" visibility="gone"/>
         </horizontal>
+        <horizontal marginTop="2">
+          <button id="btnRel" text="RELEASE PATCH" textSize="10sp" w="0" layout_weight="1" h="32" padding="0" bg="#7a5a1a" textColor="#ffffff" visibility="gone"/>
+        </horizontal>
       </vertical>
       </scroll>
     </vertical>
@@ -233,7 +236,9 @@ function buildPanel() {
   fw.btnLogout.click(function () { releaseFocus(); doLogout(); });
   fw.btnUpd.click(function () { releaseFocus(); toast("Checking for update (you have v" + APP_VERSION + ")..."); threads.start(function () { checkUpdate(true); }); });
   fw.btnOwner.click(function () { releaseFocus(); openOwner(); });
-  if (acctAdmin) fw.btnOwner.setVisibility(0);
+  fw.btnRel.click(function () { releaseFocus(); releaseLatestPatch(function (m) { toast(m); }); });
+  if (acctAdmin) { fw.btnOwner.setVisibility(0); fw.btnRel.setVisibility(0); }
+  if (NO_LOGIN) { try { fw.btnLogout.setVisibility(8); fw.btnUpd.setVisibility(8); } catch (eNL) {} }
   // fit to screen height now, and again on rotate / expand, so the panel scrolls in landscape
   var me = fw;
   threads.start(function () {
@@ -681,14 +686,18 @@ var R_UW_BLUE = [700, 745, 1030, 795];    // inside the blue 600-gem button
 var R_UW_CANCEL = [1085, 745, 1415, 795]; // inside the Cancel button
 var P_UW_CANCEL = [1250, 771];            // centre of Cancel
 var lastUwTap = 0;
-function isSlateBtn(c) {
+function isSlateBtn(c) {                 // Cancel button: grey-blue slate, about (78,84,100) - looser than before (the old test only matched ~34%)
   var r = colors.red(c), g = colors.green(c), b = colors.blue(c);
-  return r >= 70 && r <= 150 && g >= 80 && g <= 160 && b >= 100 && b <= 190 && (b - r) >= 10 && (b - r) < 70 && Math.abs(g - r) < 30;
+  return r >= 50 && r <= 170 && g >= 55 && g <= 175 && b >= 75 && b <= 200 && (b - r) >= 5 && (b - r) <= 80 && Math.abs(g - r) <= 35 && b >= g;
+}
+function isUwBlue(c) {                   // 600-gem button: indigo blue, about (49,79,123) with a darker gradient (old isBtnBlue only matched ~56%)
+  var r = colors.red(c), g = colors.green(c), b = colors.blue(c);
+  return b >= 85 && (b - r) >= 35 && (b - g) >= 15 && r < 110;
 }
 function warpPopupShowing() {
   var img = grab();
   if (!img) return false;
-  try { return fracIn(img, R_UW_BLUE, isBtnBlue, 4) >= 0.6 && fracIn(img, R_UW_CANCEL, isSlateBtn, 4) >= 0.45; } finally { img.recycle(); }
+  try { return fracIn(img, R_UW_BLUE, isUwBlue, 4) >= 0.55 && fracIn(img, R_UW_CANCEL, isSlateBtn, 4) >= 0.55; } finally { img.recycle(); }
 }
 function autoWarpPopup() {               // true = the popup was there: Cancel tapped, then the GPS X tapped
   if (Date.now() - lastUwTap < 1000) return false;
@@ -965,9 +974,13 @@ function returnToSpot() {
   nap(900);
 
   tapGame(P_GPS_WARP, "Unlimited Warp");
+  var cleared = false;                   // the 600-gem popup can take a moment to appear: look for it a few times
+  for (var w = 0; w < 5 && !cleared; w++) {
+    nap(900);
+    lastUwTap = 0;
+    cleared = autoWarpPopup();           // popup showed up -> Cancel + close GPS
+  }
   nap(1500);
-  autoWarpPopup();                       // the 600-gem popup showed up -> Cancel + close GPS
-  nap(2500);
 
   if (gpsOpen()) {
     tapGame(P_GPS_CLOSE, "close GPS");
@@ -1572,6 +1585,25 @@ function stopBot() {
 }
 
 // ===== R button: respawn watch (own thread, own on/off) =====
+// ===== AUTO ATTACK WATCH (keeps auto attack ON while the respawn watch is running) =====
+var AUTO_WATCH_EVERY = 4000;     // ms between ring checks
+var AUTO_WATCH_COOLDOWN = 6000;  // ms to wait after a tap before checking again (so a slow ring is not toggled back OFF)
+var autoWatchLast = 0, autoOffCount = 0;
+function autoWatch() {
+  if (!CFG.AUTO_CHECK) return false;                 // needs the ring check, otherwise a tap could toggle it OFF
+  var now = Date.now();
+  if (now - autoWatchLast < AUTO_WATCH_EVERY) return false;
+  autoWatchLast = now;
+  if (autoOn()) { autoOffCount = 0; return false; }
+  autoOffCount++;
+  if (autoOffCount < 2) return false;                // must look OFF on 2 checks in a row
+  autoOffCount = 0;
+  log("auto attack OFF -> tapping AUTO");
+  tapGame(P_AUTO, "AUTO attack (watch)");
+  autoWatchLast = Date.now() + AUTO_WATCH_COOLDOWN;
+  return true;
+}
+
 function respawnLoop() {
   tlRole.set("resp");
   ensureReady();
@@ -1598,6 +1630,8 @@ function respawnLoop() {
         if (respawnOn && !running) setStatus("Watching for death", "#4ade80");
       } else if (autoWarpPopup()) {                  // "Unlimited Warp" popup -> Cancel, then X beside GPS
         if (respawnOn && !running) setStatus("Watching for death", "#4ade80");
+      } else if (!gpsOpen()) {                       // nothing else on screen -> make sure auto attack is still ON
+        autoWatch();
       }
     } catch (e) {
       if (String(e) === "STOP") break;
@@ -1721,7 +1755,7 @@ function dgFindIcon(img, id) {                          // [x, y] of the dungeon
 }
 
 
-function isPremium() { return !!(acctAdmin || acctPremium); }
+function isPremium() { return !!(NO_LOGIN || acctAdmin || acctPremium); }
 function closeDg() { try { if (dgw) dgw.close(); } catch (e) {} dgw = null; try { if (dgsel) dgsel.close(); } catch (e) {} dgsel = null; }
 function dgSay(t, color) {
   ui.run(function () { try { if (dgw) { dgw.dgst.setText(String(t)); dgw.dgst.setTextColor(colors.parseColor(color || "#94a3b8")); } } catch (e) {} });
@@ -2005,12 +2039,11 @@ function openDungeon() {                                  // DUNGEON button: cho
 // =====================================================================================================
 // ===== ACCOUNT: LOGIN + AUTO SIGN-IN (Firebase - same accounts / keys / device lock as the main script) =====
 // =====================================================================================================
-// New accounts are created with REGISTER in the main script; here you log in with username + password (the access key is only asked when the account is expired / has none).
+// New accounts are created with REGISTER in the main script; here you log in with username + password (no access key).
 // A saved login signs in silently at the next start (the owner account only when "Auto sign in (owner)" is switched on).
 var FB = {
   apiKey: "AIzaSyBvUhQiUtxs7TADYZxaSaVE6oeNiYmPoy4",
   projectId: "nstp-tup",
-  requireKey: true,          // non-owner accounts need an expiring access key (same as the main script)
   domain: "cabal.local",     // username "james" signs in as james@cabal.local
   checkEvery: 90000          // re-check expiry / device lock every 90 s
 };
@@ -2018,7 +2051,6 @@ var FS_DOC = "projects/" + FB.projectId + "/databases/(default)/documents";
 var REL_DOC = "config/respawn";   // release info of THIS script (the main script keeps config/script - never mixed up)
 var fbAuth = null, srvSkew = 0, acctExp = 0, acctAdmin = false, acctPremium = false, currentUser = "", badTries = 0, lockUntil = 0, sessThread = null, updBusy = false;
 var lw = null, ow = null;
-var needKeyBox = false;          // the access-key box in the login window stays hidden unless this account has no valid licence (expired / never had a key)
 
 function fbBody(res) { try { return JSON.parse(res.body.string()); } catch (e) { return {}; } }
 function nowMs() { return Date.now() + srvSkew; }
@@ -2119,53 +2151,6 @@ function fbDeviceCheck() {              // "OK" or "NETWORK". The respawn script
   return "OK";                          // no device write, no "locked to another device" rejection
 }
 
-// ----- access keys -----
-function keyMsg(e) {
-  return e === "BADKEY" ? "Invalid key" : e === "USED" ? "Key already used" : e === "NETWORK" ? "Can't verify key - check connection" : "Key could not be redeemed";
-}
-function fbReadKey(code, peek) {        // returns {code, days, usedBy, ...} or {err}; peek = also accept used keys
-  code = String(code).trim().toUpperCase();
-  if (!/^[A-Z0-9-]{6,40}$/.test(code)) return { err: "BADKEY" };
-  try {
-    var res = http.get("https://firestore.googleapis.com/v1/" + FS_DOC + "/keys/" + code);
-    if (res.statusCode === 404 || res.statusCode === 403) return { err: "BADKEY" };
-    if (res.statusCode !== 200) return { err: "NETWORK" };
-    var kb = fbBody(res), f = kb.fields || {};
-    var owner = (f.usedBy && f.usedBy.stringValue) || "";
-    if (owner && !peek) return { err: "USED" };
-    var d = f.days ? parseInt(f.days.integerValue || f.days.doubleValue, 10) : 0;
-    if (!(d > 0 && d <= 3650)) return { err: "BADKEY" };
-    var mx = f.maxUses ? (parseInt(f.maxUses.integerValue || f.maxUses.doubleValue, 10) || 1) : 1;
-    var us = f.uses ? (parseInt(f.uses.integerValue || f.uses.doubleValue, 10) || 0) : 0;
-    var ul = (f.usedList && f.usedList.stringValue) || "";
-    if (mx > 1 && us >= mx && !peek) return { err: "USED" };
-    return { code: code, days: d, usedBy: owner, max: mx, uses: us, list: ul, multi: mx > 1, ut: kb.updateTime || "" };
-  } catch (e) { return { err: "NETWORK" }; }
-}
-function fbRedeemKey(code, tryN) {      // burn the key and set the new expiry in ONE atomic write (renews the account)
-  var k = fbReadKey(code);
-  if (k.err) return k;
-  var exp = Math.max(nowMs(), acctExp || 0) + k.days * 86400000;
-  var uf = { expiresAt: { ts: new Date(exp).toISOString() }, keyCode: k.code };
-  var r;
-  try {
-    var keyWrite = k.multi
-      ? fsDoc("keys/" + k.code, { uses: { int: k.uses + 1 }, usedList: k.list ? k.list + "," + fbAuth.uid : fbAuth.uid }, ["usedAt"], false, k.ut)
-      : fsDoc("keys/" + k.code, { usedBy: fbAuth.uid }, ["usedAt"], false, k.ut);
-    r = fbCommit([keyWrite, fsDoc("users/" + fbAuth.uid, uf, [])]);
-  } catch (e) { return { err: "NETWORK" }; }
-  if (!r) return { err: "NETWORK" };
-  if (r.statusCode < 200 || r.statusCode >= 300) {
-    var rj = fbBody(r), rs = (rj.error && rj.error.status) || "";
-    if (r.statusCode === 409 || /FAILED_PRECONDITION|ABORTED|ALREADY_EXISTS/.test(rs)) {
-      if (k.multi && (tryN || 0) < 3) return fbRedeemKey(code, (tryN || 0) + 1);
-      return { err: "USED" };
-    }
-    return { err: "FAILED" };
-  }
-  acctExp = exp;
-  return { ok: true, exp: exp };
-}
 function fbDrop() {                     // forget the session without touching the account's online state
   var t = sessThread; sessThread = null; fbAuth = null;
   if (t) { try { t.interrupt(); } catch (e) {} }
@@ -2176,7 +2161,7 @@ function fbSignOut(who) {               // best effort: mark offline, stop the s
   if (t) { try { t.interrupt(); } catch (e) {} }
 }
 
-// ----- SAVED LOGIN (username / password / key, scrambled with a per-device key) -----
+// ----- SAVED LOGIN (username / password, scrambled with a per-device key) -----
 function credXor(b) {
   var K = myDeviceId() + "|cabal";
   for (var i = 0; i < b.length; i++) b[i] = ((b[i] ^ K.charCodeAt(i % K.length)) << 24) >> 24;
@@ -2184,26 +2169,21 @@ function credXor(b) {
 }
 function credEnc(str) { return String(android.util.Base64.encodeToString(credXor(new java.lang.String(String(str)).getBytes("UTF-8")), 2)); }
 function credDec(str) { return String(new java.lang.String(credXor(android.util.Base64.decode(String(str), 0)), "UTF-8")); }
-function saveLogin(u, p, k, adm) {
-  try { store.put("saved_login", JSON.stringify({ u: credEnc(u), p: credEnc(p), k: credEnc(adm ? "" : (k || "")), a: adm ? 1 : 0 })); } catch (e) {}
+function saveLogin(u, p, adm) {
+  try { store.put("saved_login", JSON.stringify({ u: credEnc(u), p: credEnc(p), a: adm ? 1 : 0 })); } catch (e) {}
 }
 function loadLogin() {
   try {
     var raw = store.get("saved_login", "");
     if (!raw) return null;
-    var o = JSON.parse(raw), c = { u: credDec(o.u), p: credDec(o.p), k: credDec(o.k || ""), a: o.a === 1 };
+    var o = JSON.parse(raw), c = { u: credDec(o.u), p: credDec(o.p), a: o.a === 1 };
     return (c.u && c.p) ? c : null;
   } catch (e) { return null; }
 }
 function forgetLogin() { try { store.remove("saved_login"); } catch (e) {} }
 
 // ----- login itself (worker thread). silent = auto sign-in at the start: no "welcome" noise, failures just open the login window -----
-function loginWith(name, pw, keyIn, silent) {
-  var ki = null;
-  if (FB.requireKey && keyIn) {
-    ki = fbReadKey(keyIn, true);
-    if (ki.err) { toast(keyMsg(ki.err)); return false; }
-  }
+function loginWith(name, pw, silent) {
   var email = name.indexOf("@") >= 0 ? name : name + "@" + FB.domain, err;
   try { err = fbSignIn(email, pw); } catch (e) { err = "NETWORK"; }
   if (err) {
@@ -2226,31 +2206,8 @@ function loginWith(name, pw, keyIn, silent) {
     toast(dev === "OTHER" ? "This account is locked to another device" : "Can't verify device - check connection");
     return false;
   }
-  if (FB.requireKey && !acctAdmin && !ki) {       // no key typed: fine for a registered account whose licence is still running
-    if (!(acctExp && nowMs() < acctExp)) {        // no licence yet / expired -> a key is needed (the key box appears)
-      fbDrop(); needKeyBox = true;
-      ui.run(function () { try { if (lw) lw.ikey.setVisibility(0); } catch (e) {} });
-      toast(acctExp ? "Account expired - enter a NEW key, then LOGIN" : "This account has no access key yet - enter one, then LOGIN");
-      return false;
-    }
-  }
-  if (FB.requireKey && !acctAdmin && ki) {        // a key was typed: check it / redeem it (renews the account)
-    var mineShared = ki.multi && ki.list.split(",").indexOf(fbAuth.uid) >= 0;
-    if (ki.multi ? mineShared : !!ki.usedBy) {    // used key: must be one of THIS account's keys
-      if (!ki.multi && ki.usedBy !== fbAuth.uid) { fbDrop(); toast("This key belongs to another account"); return false; }
-    } else {                                      // fresh key: redeem it (renews / extends the account)
-      var rr = fbRedeemKey(keyIn);
-      if (rr.err) { fbDrop(); toast(keyMsg(rr.err)); return false; }
-      toast("New key added");
-    }
-  }
-  if (!acctAdmin && acctExp && nowMs() >= acctExp) {
-    fbDrop();
-    toast("Account expired - enter a NEW key, then LOGIN");
-    return false;
-  }
   badTries = 0; currentUser = name;
-  saveLogin(name, pw, keyIn, acctAdmin);
+  saveLogin(name, pw, acctAdmin);
   try { fbCommit([fsDoc("users/" + fbAuth.uid, { name: name, email: email }, ["lastLogin"])]); } catch (e) {}
   startSession();
   ui.run(function () { closeLogin(); buildPanel(); refreshButtons(); });
@@ -2301,7 +2258,6 @@ function startSession() {
             kickOut("Logged out by the owner"); return;
           }
         }
-        if (!acctAdmin && acctExp && nowMs() >= acctExp) { needKeyBox = true; kickOut("Account expired - enter a new key to log in"); return; }
       } catch (e) {}
       for (var w8 = 0; w8 < FB.checkEvery && fbAuth; w8 += 1000) sleep(1000);
     }
@@ -2341,7 +2297,6 @@ function showLogin() {
       <text id="lwTitle" text="LOGIN (drag here)" textSize="12sp" textColor="#64a8ff" textStyle="bold" bg="#1a1a24" padding="5"/>
       <input id="iuser" hint="username" inputType="text" textColor="#f8fafc" textSize="13sp" padding="3"/>
       <input id="ipass" hint="password" inputType="textPassword" textColor="#f8fafc" textSize="13sp" padding="3"/>
-      <input id="ikey" visibility="gone" hint="access key (expired account only)" inputType="text" textColor="#f8fafc" textSize="13sp" padding="3"/>
       <button id="btnLogin" text="LOGIN" textSize="11sp" h="34" padding="0" bg="#2e7d32" textColor="#ffffff" marginTop="3"/>
       <horizontal marginTop="2">
         <button id="btnForget" text="FORGET SAVED" textSize="9sp" w="0" layout_weight="1" h="30" padding="0" bg="#2d2d3a" textColor="#e2e8f0"/>
@@ -2352,8 +2307,7 @@ function showLogin() {
   lw.setPosition(10, 200);
   var w = lw;
   var c = loadLogin();
-  if (c) { w.iuser.setText(c.u); w.ipass.setText(c.p); if (c.k) w.ikey.setText(c.k); }
-  if (needKeyBox) w.ikey.setVisibility(0);
+  if (c) { w.iuser.setText(c.u); w.ipass.setText(c.p); }
   var ox = 0, oy = 0, wx = 0, wy = 0;
   w.lwTitle.setOnTouchListener(function (v, e) {
     var act = e.getAction();
@@ -2361,7 +2315,7 @@ function showLogin() {
     else if (act == 2) { w.setPosition(wx + (e.getRawX() - ox), wy + (e.getRawY() - oy)); }
     return true;
   });
-  ["iuser", "ipass", "ikey"].forEach(function (id) {
+  ["iuser", "ipass"].forEach(function (id) {
     var v = w[id];
     v.on("touch_down", function () { w.requestFocus(); v.requestFocus(); });
     v.setOnEditorActionListener(new android.widget.TextView.OnEditorActionListener({
@@ -2372,16 +2326,16 @@ function showLogin() {
     try { w.disableFocus(); } catch (e) {}
     var now = Date.now();
     if (now < lockUntil) { toast("Wait " + Math.ceil((lockUntil - now) / 1000) + "s"); return; }
-    var name = String(w.iuser.getText()).trim().toLowerCase(), pw = String(w.ipass.getText()), key = String(w.ikey.getText()).trim();
+    var name = String(w.iuser.getText()).trim().toLowerCase(), pw = String(w.ipass.getText());
     if (!name || !pw) { toast("Enter username and password"); return; }
     toast("Signing in...");
     threads.start(function () {
       var ok = false;
-      try { ok = loginWith(name, pw, key, false); } catch (e) { toast("Login error: " + e); }
+      try { ok = loginWith(name, pw, false); } catch (e) { toast("Login error: " + e); }
       if (!ok) ui.run(function () { try { if (lw) lw.ipass.setText(""); } catch (e) {} });
     });
   });
-  w.btnForget.click(function () { forgetLogin(); w.iuser.setText(""); w.ipass.setText(""); w.ikey.setText(""); toast("Saved login removed"); });
+  w.btnForget.click(function () { forgetLogin(); w.iuser.setText(""); w.ipass.setText(""); toast("Saved login removed"); });
   w.btnLQuit.click(function () { exit(); });
 }
 
@@ -2450,6 +2404,24 @@ function checkUpdate(manual) {
 // =====================================================================================================
 // Uploads this script's file from the phone to a PUBLIC GitHub repo (commit-pinned raw link), checks the link serves the
 // same bytes, then writes config/respawn (version / url / sha256) so every copy of this script updates itself.
+var relArm = 0, relBusy = false;      // one-tap release: the first tap only arms it (a release reaches every copy)
+function releaseLatestPatch(report) {   // shared by the panel's RELEASE PATCH button and the owner window; report(msg) shows the result
+  if (!acctAdmin) { toast("Owner only"); return; }
+  if (relBusy) { toast("Release already running"); return; }
+  var o2 = {};
+  try { o2 = JSON.parse(store.get("gh_cfg", "{}")); } catch (e) {}
+  var tok = ""; try { tok = o2.tok ? credDec(o2.tok) : ""; } catch (e) {}
+  if (!o2.repo || !o2.path || !o2.file || tok.length < 20) { toast("Open OWNER, fill the boxes and press PUBLISH TO GITHUB once first"); return; }
+  if (Date.now() - relArm > 6000) { relArm = Date.now(); toast("Tap again within 6s to release " + o2.file.split("/").pop() + " to ALL copies"); return; }
+  relArm = 0; relBusy = true;
+  toast("Releasing...");
+  threads.start(function () {
+    var msg;
+    try { msg = ghPublish(o2.repo, o2.branch || "main", o2.path, o2.file, tok); } catch (e) { msg = "Release error: " + e; }
+    relBusy = false;
+    report(msg);
+  });
+}
 function closeOwner() { closeFp(); try { if (ow) ow.close(); } catch (e) {} ow = null; }
 function ghPublish(repo, branch, rpath, file, tok) {      // returns a message for the owner
   if (!fbAuth) return "Log in first";
@@ -2679,24 +2651,9 @@ function openOwner() {
       out(msg);
     });
   });
-  var relArm = 0, relBusy = false;      // one-tap release: the first tap only arms it (a release reaches every copy)
   w.btnGhRel.click(function () {
     try { w.disableFocus(); } catch (e) {}
-    if (!acctAdmin) { toast("Owner only"); return; }
-    if (relBusy) { toast("Release already running"); return; }
-    var o2 = {};
-    try { o2 = JSON.parse(store.get("gh_cfg", "{}")); } catch (e) {}
-    var tok = ""; try { tok = o2.tok ? credDec(o2.tok) : ""; } catch (e) {}
-    if (!o2.repo || !o2.path || !o2.file || tok.length < 20) { toast("Fill the boxes and press PUBLISH TO GITHUB once first"); return; }
-    if (Date.now() - relArm > 6000) { relArm = Date.now(); toast("Tap again within 6s to release " + o2.file.split("/").pop() + " to ALL copies"); return; }
-    relArm = 0; relBusy = true;
-    toast("Releasing...");
-    threads.start(function () {
-      var msg;
-      try { msg = ghPublish(o2.repo, o2.branch || "main", o2.path, o2.file, tok); } catch (e) { msg = "Release error: " + e; }
-      relBusy = false;
-      out(msg);
-    });
+    releaseLatestPatch(out);
   });
   w.btnMsgOpen.click(function () { try { w.disableFocus(); } catch (e) {} openMsgSend(); });
   w.btnOwClose.click(function () { closeOwner(); });
@@ -2920,12 +2877,15 @@ try {                                    // ask for "draw over other apps" once,
 } catch (e) {}
 // AUTO SIGN-IN: a saved login signs in silently, owner account too (ON by default; the "Auto sign in (owner)" switch in the OWNER window turns it off).
 // Anything else (no saved login / it failed / expired key) shows the login window.
-var autoSaved = loadLogin();
-if (autoSaved && (autoSaved.a ? !!store.get("auto_login", true) : true)) {
+var NO_LOGIN = false;   // true = no login window, the panel opens straight away (no Firebase / key / device checks)
+var autoSaved = NO_LOGIN ? null : loadLogin();
+if (NO_LOGIN) {
+  ui.run(function () { buildPanel(); refreshButtons(); });
+} else if (autoSaved && (autoSaved.a ? !!store.get("auto_login", true) : true)) {
   toast("Signing in...");
   threads.start(function () {
     var ok = false;
-    try { ok = loginWith(autoSaved.u, autoSaved.p, autoSaved.k, true); } catch (e) { log("auto sign-in err: " + e); }
+    try { ok = loginWith(autoSaved.u, autoSaved.p, true); } catch (e) { log("auto sign-in err: " + e); }
     if (!ok) ui.run(function () { showLogin(); });
   });
 } else {

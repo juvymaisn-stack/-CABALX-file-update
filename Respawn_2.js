@@ -5,7 +5,7 @@
 //   X / Y inputs + TEST. Tap an input to type, press the keyboard Done to release focus.
 
 // ===== VERSION =====
-var APP_VERSION = 30;          // bump this on every release you publish (whole number)
+var APP_VERSION = 31;          // bump this on every release you publish (whole number)
 
 // ===== GAME SPACE =====
 var GW = 2093, GH = 1177;
@@ -926,8 +926,10 @@ function gpsOpen() {
 }
 
 // ===== AUTO ATTACK =====
-function autoOn() {
-  var img = grab();
+// autoOn(img): pass a capture to reuse it; with no argument it grabs its own and recycles it.
+function autoOn(img) {
+  var own = !img;
+  if (own) img = grab();
   if (!img) return false;
   var n = 0, cols = [];
   for (var i = 0; i < P_AUTO_RING.length; i++) {
@@ -935,7 +937,7 @@ function autoOn() {
     cols.push(colors.toString(c));
     if (isGold(c)) n++;
   }
-  img.recycle();
+  if (own) img.recycle();
   log("AUTO ring " + cols.join(" ") + " gold=" + n);
   return n >= 2;
 }
@@ -1594,13 +1596,17 @@ function autoWatch() {
   var now = Date.now();
   if (now - autoWatchLast < AUTO_WATCH_EVERY) return false;
   autoWatchLast = now;
-  if (autoOn()) { autoOffCount = 0; return false; }
+  var img = grab();
+  if (!img) return false;                            // no capture: don't count it as "off" (a tap would toggle AUTO off)
+  var on = autoOn(img);
+  img.recycle();
+  if (on) { autoOffCount = 0; return false; }
   autoOffCount++;
   if (autoOffCount < 2) return false;                // must look OFF on 2 checks in a row
   autoOffCount = 0;
   log("auto attack OFF -> tapping AUTO");
   tapGame(P_AUTO, "AUTO attack (watch)");
-  autoWatchLast = Date.now() + AUTO_WATCH_COOLDOWN;
+  autoWatchLast = Date.now() + AUTO_WATCH_COOLDOWN - AUTO_WATCH_EVERY;  // so the next check comes AUTO_WATCH_COOLDOWN after this tap
   return true;
 }
 
